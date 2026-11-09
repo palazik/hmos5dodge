@@ -11,12 +11,13 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 
 **The candidate has passed offline validation. Boot on OP13 remains unverified.**
 
-Revision 3 passed userdata initialization/mounting and stock module loading,
-then stopped before native init because the DRM device was absent. Revision 4
-forwards the stock DSI panel boot arguments, explicitly includes the display's
-hardware suppliers, and waits for registration;
-see [display startup](op13/DISPLAY-STARTUP.md). Userdata behavior remains as
-documented in [DSU userdata startup](op13/DSU-DATA-INITIALIZATION.md).
+Revision 4 passed the DSU mounts, userdata startup, required display-device
+checks and device-filter attachment. Its log ended immediately before the
+native init handoff, with no surviving native-startup errors after reboot.
+Revision 5 adds a bounded persistent recorder for that stage; see
+[native startup diagnostics](op13/NATIVE-STARTUP.md). Full framework boot
+remains unresolved. Userdata behavior is unchanged; see
+[DSU userdata startup](op13/DSU-DATA-INITIALIZATION.md).
 
 - Separate partition images and the DSU ZIP have been built and checked.
 - OP13 vendor contents, permissions, capabilities and symlinks are preserved.

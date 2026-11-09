@@ -5,11 +5,13 @@ mechanism. It targets the full supplied HMOS5 framework, SceneBoard and
 SuperLauncher. It is an experimental offline candidate: **no OP13 boot has
 been verified**. The kernel is unchanged.
 
-Revision 3 passed userdata initialization/mounting and stock module loading,
-then stopped at a missing DRM device before native HarmonyOS init. Revision 4
-forwards the stock DSI panel boot arguments and adds measured hardware
-suppliers and a bounded registration wait; see [DISPLAY-STARTUP.md](DISPLAY-STARTUP.md). Userdata handling remains
-as described in [DSU-DATA-INITIALIZATION.md](DSU-DATA-INITIALIZATION.md).
+Revision 4 passed the partition/data mounts, required DRM/GPU/DMA-heap device
+checks and device-filter attachment, then logged the native init handoff.
+Its later native errors did not survive reboot. Revision 5 adds bounded
+persistent recording of kernel messages, exec status and PID 1 state;
+see [NATIVE-STARTUP.md](NATIVE-STARTUP.md). The hardware registration change
+is described in [DISPLAY-STARTUP.md](DISPLAY-STARTUP.md). Userdata handling
+remains as described in [DSU-DATA-INITIALIZATION.md](DSU-DATA-INITIALIZATION.md).
 A successful native boot has not been observed. Fork adaptations are documented in
 [FORK-REVIEW.md](FORK-REVIEW.md).
 
@@ -205,6 +207,7 @@ retained pstore logs may help identify an early failure:
 
 ```sh
 adb shell "su -c 'cat /metadata/hmos5dodge/bootstrap.log'" > op13-hmos-bootstrap.txt
+adb shell "su -c 'cat /metadata/hmos5dodge/native-startup.log'" > op13-hmos-native-startup.txt
 adb shell su -c 'ls -l /sys/fs/pstore'
 adb shell su -c 'cat /sys/fs/pstore/console-ramoops*' > op13-hmos-kernel.txt
 ```
@@ -265,8 +268,10 @@ python3 op13/verify_multipart.py \
   --output /home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-multipart-new
 ```
 
-Sixteen component checks cover compilation, sanitizer-backed device-filter/
-data-header tests, rejected non-PID1 invocation, actual ARM64 storage mounts in an
+Seventeen component checks cover compilation, sanitizer-backed recorder/device-filter/
+data-header tests, successful/failed exec-status delivery and output bounds,
+rejected non-PID1 invocation, loading actual donor init with native library paths,
+actual ARM64 storage mounts in an
 isolated namespace, display ABI/mode behavior, actual input-backend
 initialization without HDF, binary policy deltas, and the
 ARM64 formatter using the native library layout on a disposable regular test

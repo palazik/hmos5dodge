@@ -11,6 +11,7 @@
 #include <linux/bpf.h>
 #include <linux/capability.h>
 #include <linux/fs.h>
+#include <poll.h>
 #include <sched.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -35,8 +36,10 @@ static const char *root = "/mnt/hmos-root";
 static int kmsg = -1;
 static int bootlog = -1;
 static int metalog = -1;
+static int native_log = -1;
 static size_t metalog_bytes;
 #define METALOG_LIMIT (1024U * 1024U)
+#define NATIVE_LOG_LIMIT (4U * 1024U * 1024U)
 struct device { unsigned major, minor; };
 struct binder_device_request { char name[256]; uint32_t major, minor; };
 #define BINDER_DEVICE_ADD _IOWR('b', 1, struct binder_device_request)
@@ -168,6 +171,169 @@ static void open_metadata_log(void)
         (st.st_mode & 0777) != 0600 || st.st_size < 0 || st.st_size >= METALOG_LIMIT) { close(fd); return; }
     metalog = fd;
     metalog_bytes = st.st_size;
+}
+
+static void open_native_log(void)
+{
+    // Only an already validated metadata directory. Never expose this mount
+    // or a directory descriptor to native init or its services.
+    if (metalog < 0) return;
+    int directory_fd = open("/metadata/hmos5dodge", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (directory_fd < 0) return;
+    struct stat st;
+    if (fstat(directory_fd, &st) || st.st_uid || (st.st_mode & 0777) != 0700) {
+        close(directory_fd); return;
+    }
+    int fd = openat(directory_fd, "native-startup.log",
+        O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0600);
+    close(directory_fd);
+    if (fd < 0) return;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_uid || st.st_nlink != 1 ||
+        (st.st_mode & 0777) != 0600 || st.st_size < 0) { close(fd); return; }
+    native_log = fd;
+}
+
+static bool append_native_log(int output, const char *text, size_t length, size_t *used, size_t limit)
+{
+    if (*used >= limit) return false;
+    if (length > limit - *used) length = limit - *used;
+    while (length) {
+        ssize_t written = write(output, text, length);
+        if (written < 0 && errno == EINTR) continue;
+        if (written <= 0) return false;
+        text += written; length -= written; *used += written;
+    }
+    return *used < limit;
+}
+
+static long long monotonic_ms(void)
+{
+    struct timespec time;
+    if (clock_gettime(CLOCK_MONOTONIC, &time)) return -1;
+    return (long long)time.tv_sec * 1000 + time.tv_nsec / 1000000;
+}
+
+static void record_init_state(int output, size_t *used, size_t limit)
+{
+    const char *files[] = {"comm", "status", "wchan", "stack", "syscall", "cmdline"};
+    char path[128], buffer[4096], title[256];
+    for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); ++i) {
+        snprintf(path, sizeof(path), "/proc/1/%s", files[i]);
+        snprintf(title, sizeof(title), "\n--- PID 1 %s ---\n", files[i]);
+        append_native_log(output, title, strlen(title), used, limit);
+        int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+        ssize_t length = fd < 0 ? -1 : read(fd, buffer, sizeof(buffer));
+        int saved = errno;
+        if (fd >= 0) close(fd);
+        if (length < 0) {
+            snprintf(buffer, sizeof(buffer), "unavailable: errno=%d\n", saved);
+            length = strlen(buffer);
+        } else if (!strcmp(files[i], "cmdline")) {
+            for (ssize_t j = 0; j < length; ++j) if (!buffer[j]) buffer[j] = ' ';
+        }
+        append_native_log(output, buffer, length, used, limit);
+    }
+    ssize_t length = readlink("/proc/1/exe", buffer, sizeof(buffer));
+    const char heading[] = "\n--- PID 1 executable ---\n";
+    append_native_log(output, heading, sizeof(heading) - 1, used, limit);
+    if (length > 0) append_native_log(output, buffer, length, used, limit);
+    append_native_log(output, "\n", 1, used, limit);
+}
+
+static void native_record_loop(int kernel, int output, int exec_pipe, unsigned duration_ms, size_t limit)
+{
+    size_t used = 0, exec_bytes = 0;
+    int exec_error = 0;
+    const char begin[] = "HMOS native startup recorder revision 5; latest attempt only\n"
+        "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
+    append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
+    long long start = monotonic_ms(), next_state = start + 1000;
+    if (start < 0) return;
+    struct pollfd inputs[] = {{kernel, POLLIN, 0}, {exec_pipe, POLLIN, 0}};
+    while (used < limit) {
+        long long now = monotonic_ms();
+        if (now < 0 || now - start >= duration_ms) break;
+        int remaining = duration_ms - (now - start);
+        int ready = poll(inputs, 2, remaining < 250 ? remaining : 250);
+        if (ready < 0 && errno == EINTR) continue;
+        if (ready < 0) break;
+        if (inputs[1].fd >= 0 && inputs[1].revents) {
+            ssize_t count = read(inputs[1].fd, (char *)&exec_error + exec_bytes, sizeof(exec_error) - exec_bytes);
+            if (count > 0) exec_bytes += count;
+            if (exec_bytes == sizeof(exec_error) || count == 0) {
+                char message[192];
+                if (exec_bytes == sizeof(exec_error))
+                    snprintf(message, sizeof(message), "execve FAILED: errno=%d (%s)\n", exec_error, strerror(exec_error));
+                else if (exec_bytes)
+                    snprintf(message, sizeof(message), "execve status incomplete; acceptance unknown\n");
+                else
+                    snprintf(message, sizeof(message), "execve status pipe closed without error; loader/framework success unverified\n");
+                append_native_log(output, message, strlen(message), &used, limit);
+                close(inputs[1].fd); inputs[1].fd = -1;
+            } else if (count < 0 && errno != EAGAIN && errno != EINTR) {
+                close(inputs[1].fd); inputs[1].fd = -1;
+            }
+        }
+        if (inputs[0].fd >= 0 && inputs[0].revents) {
+            for (unsigned batch = 0; batch < 32 && used < limit; ++batch) {
+                char record[16384];
+                ssize_t count = read(inputs[0].fd, record, sizeof(record));
+                if (count > 0) {
+                    append_native_log(output, record, count, &used, limit);
+                    append_native_log(output, "\n", 1, &used, limit);
+                } else if (count < 0 && errno == EPIPE) {
+                    const char lost[] = "\n[kernel records overwritten before read]\n";
+                    append_native_log(output, lost, sizeof(lost) - 1, &used, limit);
+                } else {
+                    if (!count || (errno != EAGAIN && errno != EINTR)) {
+                        close(inputs[0].fd); inputs[0].fd = -1;
+                    }
+                    break;
+                }
+            }
+        }
+        now = monotonic_ms();
+        if (now >= next_state) {
+            record_init_state(output, &used, limit);
+            next_state = now + 15000;
+        }
+        // Retain evidence after a forced reboot, rather than waiting until
+        // the recorder exits. Only this fixed regular log file is written.
+        if (fdatasync(output)) break;
+    }
+    fdatasync(output);
+}
+
+static int start_native_recorder(void)
+{
+    if (native_log < 0) { log_line("native startup recorder unavailable: metadata log not open"); return -1; }
+    int input = open("/dev/kmsg", O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    int status_pipe[2];
+    if (input < 0 || lseek(input, 0, SEEK_END) < 0 || pipe2(status_pipe, O_CLOEXEC | O_NONBLOCK)) {
+        if (input >= 0) close(input);
+        log_line("native startup recorder unavailable: errno=%d", errno);
+        close(native_log); native_log = -1; return -1;
+    }
+    if (ftruncate(native_log, 0)) fatal("truncate latest native startup log");
+    pid_t child = fork();
+    if (child < 0) fatal("native startup recorder fork");
+    if (!child) {
+        // All sources are >= 3. After duplication only a read-only kernel
+        // stream, one write-only regular log, and a read-only status pipe
+        // survive. This process has already entered the guest chroot/filter.
+        if (dup2(input, 0) < 0 || dup2(native_log, 1) < 0 || dup2(status_pipe[0], 2) < 0 ||
+            syscall(__NR_close_range, 3U, ~0U, 0)) _exit(120);
+        prctl(PR_SET_NAME, "hmos-native-log", 0, 0, 0);
+        for (unsigned cap = 0; cap <= 63; ++cap) prctl(PR_CAPBSET_DROP, cap, 0, 0, 0);
+        struct __user_cap_header_struct header = {_LINUX_CAPABILITY_VERSION_3, 0};
+        struct __user_cap_data_struct capabilities[2] = {{0}, {0}};
+        if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || syscall(__NR_capset, &header, capabilities)) _exit(121);
+        native_record_loop(0, 1, 2, 180000, NATIVE_LOG_LIMIT);
+        _exit(0);
+    }
+    close(input); close(status_pipe[0]); close(native_log); native_log = -1;
+    log_line("native startup recorder started; /metadata/hmos5dodge/native-startup.log; at most 4 MiB / 180 seconds");
+    return status_pipe[1];
 }
 
 static bool dm_name_valid(const char *name);
@@ -692,10 +858,19 @@ int main(int argc, char **argv)
         fputs("This executable is only for Android DSU PID-1 handoff. No action taken.\n", stderr);
         return 2;
     }
+    // Reserve stdio before opening diagnostic sources, so recorder fd
+    // duplication cannot alias a source with its 0/1/2 destination.
+    for (int fd = 0; fd <= 2; ++fd) {
+        if (fcntl(fd, F_GETFD) < 0 && errno == EBADF) {
+            int null_fd = open("/dev/null", O_RDWR | O_CLOEXEC);
+            if (null_fd != fd) fatal("reserve standard descriptors");
+        }
+    }
     kmsg = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
     umask(0);
     open_metadata_log();
-    log_line("starting OP13 DSU handoff revision 4; stage=partition-setup; argv[1]=%s", argv[1]);
+    open_native_log();
+    log_line("starting OP13 DSU handoff revision 5; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
     directory(root, 0755);
@@ -820,8 +995,15 @@ int main(int argc, char **argv)
     root_mount("cgroup2", "/dev/cgroup", "cgroup2", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL);
     log_line("executing full donor init --second-stage; framework/SceneBoard target");
     if (chdir(root) || chroot(".") || chdir("/")) fatal("chroot");
-    // Include inherited first-stage fds in the close, not only our own fds.
-    if (syscall(__NR_close_range, 3U, ~0U, 0)) fatal("close inherited descriptors");
+    int handoff_status = start_native_recorder();
+    // Only the close-on-exec error pipe may survive until execve. The native
+    // graph inherits neither metadata logs nor old-root/block descriptors.
+    kmsg = bootlog = metalog = -1;
+    if (handoff_status >= 0 && handoff_status != 3) {
+        if (dup3(handoff_status, 3, O_CLOEXEC) < 0) fatal("handoff status descriptor");
+        handoff_status = 3;
+    }
+    if (syscall(__NR_close_range, handoff_status >= 0 ? 4U : 3U, ~0U, 0)) fatal("close inherited descriptors");
     kmsg = bootlog = metalog = -1;
     int null = open("/dev/null", O_RDONLY | O_CLOEXEC);
     if (null < 0) fatal("guest null device");
@@ -838,6 +1020,9 @@ int main(int argc, char **argv)
     char *const init_args[] = {"/system/bin/init", "--second-stage", "0", NULL};
     char *const environment[] = {"PATH=/system/bin:/vendor/bin", "OHOS_MESA_SOFTWARE=true", NULL};
     execve(init_args[0], init_args, environment);
+    int exec_error = errno;
+    if (handoff_status >= 0) { write(handoff_status, &exec_error, sizeof(exec_error)); close(handoff_status); }
     kmsg = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
+    errno = exec_error;
     fatal("native init exec");
 }

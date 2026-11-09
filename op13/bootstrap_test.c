@@ -93,6 +93,54 @@ static void delayed_device_fixture(void)
     assert(!rmdir(directory));
 }
 
+static void recorder_fixture(bool exec_failed, size_t limit)
+{
+    char path[] = "/tmp/hmos-recorder-XXXXXX";
+    int output = mkstemp(path), kernel[2], status[2];
+    assert(output >= 0); unlink(path);
+    assert(!pipe2(kernel, O_NONBLOCK | O_CLOEXEC));
+    assert(!pipe2(status, O_NONBLOCK | O_CLOEXEC));
+    pid_t child = fork();
+    assert(child >= 0);
+    if (!child) {
+        close(kernel[0]); close(status[0]);
+        const char message[] = "6,12,1234,-;[pid=1][Init] boot job pre-init start";
+        assert(write(kernel[1], message, sizeof(message) - 1) == sizeof(message) - 1);
+        if (exec_failed) {
+            execl("/this-hmos-recorder-test-executable-does-not-exist", "missing", NULL);
+            int error = errno;
+            assert(write(status[1], &error, 1) == 1); // partial pipe reads are valid
+            struct timespec delay = {.tv_nsec = 20000000};
+            nanosleep(&delay, NULL);
+            assert(write(status[1], (char *)&error + 1, sizeof(error) - 1) == sizeof(error) - 1);
+            close(status[1]);
+        } else {
+            // Use a real successful exec to exercise O_CLOEXEC EOF, rather
+            // than pretending a text message proves loader acceptance.
+            execl("/bin/true", "true", NULL);
+            _exit(119);
+        }
+        close(kernel[1]); _exit(0);
+    }
+    close(kernel[1]); close(status[1]);
+    int result;
+    if (limit <= 512)
+        assert(waitpid(child, &result, 0) == child && WIFEXITED(result) && WEXITSTATUS(result) == 0);
+    native_record_loop(kernel[0], output, status[0], 150, limit);
+    close(kernel[0]); close(status[0]);
+    if (limit > 512)
+        assert(waitpid(child, &result, 0) == child && WIFEXITED(result) && WEXITSTATUS(result) == 0);
+    struct stat st;
+    assert(!fstat(output, &st) && st.st_size <= (off_t)limit);
+    char text[4096] = {0};
+    assert(pread(output, text, sizeof(text) - 1, 0) == st.st_size);
+    if (limit > 512) {
+        assert(strstr(text, "boot job pre-init start"));
+        assert(strstr(text, exec_failed ? "execve FAILED: errno=2" : "status pipe closed without error"));
+    } else assert(st.st_size == (off_t)limit);
+    close(output);
+}
+
 static int evaluate(const struct bpf_insn *instructions, size_t count,
                     uint32_t type, uint32_t major_number, uint32_t minor_number)
 {
@@ -138,6 +186,9 @@ int main(int argc, char **argv)
     assert(argc == 1);
     mapper_fixtures();
     delayed_device_fixture();
+    recorder_fixture(false, 4095);
+    recorder_fixture(true, 4095);
+    recorder_fixture(false, 32);
     char options[256];
     assert(drm_boot_options("console=tty0 msm_drm.dsi_display0=qcom,panel_A:config0: msm_drm.modeset=0 unrelated.key=x",
         options, sizeof(options)) == 1);

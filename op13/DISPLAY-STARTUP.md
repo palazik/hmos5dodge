@@ -84,3 +84,11 @@ The missing suppliers are a supported explanation to test, not a recovered
 kernel diagnosis of the failed DSU probe. The capture was from working Android
 after that failed attempt. The next test must establish whether the complete
 provider plan registers DRM and advances into native HarmonyOS init.
+
+## Revision-4 phone result
+
+The complete latest phone log passed required DRM/GPU/DMA-heap device discovery
+and device-filter attachment, reaching the message before native init exec.
+This establishes that the earlier missing-card0 stop was passed. It does not
+prove modesetting, rendering, touch or successful native init/framework startup.
+Revision 5 keeps this hardware plan and adds [persistent native diagnostics](NATIVE-STARTUP.md).

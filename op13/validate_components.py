@@ -38,6 +38,19 @@ def main():
         '-Wall', '-Wextra', '-Werror', 'op13/bootstrap_test.c', '-o', bootstrap / 'bootstrap-test']))
     tests.append(run('device-filter-and-data-scan', [bootstrap / 'bootstrap-test']))
     tests.append(run('bootstrap-refuses-non-handoff', [qemu, bootstrap / 'init', '--not-pid1'], expected=2))
+    # Run the actual donor init with its native loader/search paths. Bwrap's
+    # reaper remains PID 1, so donor init reaches its non-PID1 refusal instead
+    # of starting services. No LD_LIBRARY_PATH or substituted libc is used.
+    tests.append(run('arm64-donor-init-loader', ['bwrap', '--die-with-parent', '--unshare-all',
+        '--uid', '0', '--gid', '0', '--tmpfs', '/', '--proc', '/proc', '--dev', '/dev',
+        '--dir', '/system/lib',
+        '--ro-bind', WORKSPACE / 'work/inspect/system/system/bin', '/system/bin',
+        '--ro-bind', WORKSPACE / 'work/inspect/system/system/lib64', '/system/lib64',
+        '--ro-bind', WORKSPACE / 'work/inspect/system/system/etc', '/system/etc',
+        '--ro-bind', SYSROOT / 'usr/lib/libc.so', '/system/lib/ld-musl-aarch64.so.1',
+        '--symlink', 'system/lib', '/lib', '--symlink', 'system/lib64', '/lib64',
+        '--symlink', 'system/etc', '/etc', '--clearenv', '--setenv', 'PATH', '/system/bin:/vendor/bin',
+        '--ro-bind', qemu, '/qemu', '/qemu', '/system/bin/init', '--second-stage', '0']))
     environment = dict(os.environ, SYSROOT=str(SYSROOT))
     tests.append(run('storage-library-build', ['bash', 'build/ohos-clang', '-O2', '-fPIC', '-Wall', '-Wextra', '-Werror',
         '-shared', 'op13/local_storage.c', '-Wl,-soname,libop13_local_storage.so', '-Wl,--no-undefined',
