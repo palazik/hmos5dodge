@@ -247,7 +247,9 @@ def main():
     print('Writing multipart DSU ZIP', flush=True)
     package = write_package(output, images)
     report = {'status': 'experimental-op13-only-multipart-dsu', 'phone_boot_tested': False,
-        'handoff_revision': 2, 'selinux_mode_changed': False,
+        'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
+        'userdata_allocation_resized': False,
+        'handoff_revision': 3, 'selinux_mode_changed': False,
         'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',
         'kernel_modified': False, 'physical_partitions_written': False,
         'vendor_base': 'op13_stock/vendor.img', 'whole_donor_vendor_used': False,

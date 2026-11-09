@@ -5,10 +5,12 @@ mechanism. It targets the full supplied HMOS5 framework, SceneBoard and
 SuperLauncher. It is an experimental offline candidate: **no OP13 boot has
 been verified**. The kernel is unchanged.
 
-The first device attempt stopped at the OnePlus logo and left no pstore log.
-The revised bootstrap adds explicit DSU mount fallback and earlier diagnostics;
-its changes and the six reviewed fork commits are documented in
-[FORK-REVIEW.md](FORK-REVIEW.md). A later successful boot has not been observed.
+The second device attempt verified all eight DSU mounts and stopped at the
+bootstrap's overly strict userdata check, before HarmonyOS init. Revision 3
+corrects fresh DSU filesystem startup without a format-on-mount-error path;
+see [DSU-DATA-INITIALIZATION.md](DSU-DATA-INITIALIZATION.md). A successful native
+boot has not been observed. The reviewed fork adaptations are documented in
+[FORK-REVIEW.md](FORK-REVIEW.md).
 
 The local package is:
 `/home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-current/hmos5-op13-dsu.zip`.
@@ -104,20 +106,21 @@ the saved donor init as `/system/bin/init --second-stage 0`. It no longer loop
 mounts ROM images inside system.img and no longer overlays the whole donor
 vendor over OP13 vendor.
 
-Writes use the exact `userdata_gsi` mapping. A failed mount does not authorize
-a format: the entire mapping must be zero, within size bounds, and match its
-pinned device identity before the native ext4 formatter runs. Unmountable
-nonblank data is preserved and boot stops. There is no physical-userdata
-fallback. The guest receives private BinderFS nodes and a cgroup device filter
+Writes use the exact `userdata_gsi` mapping. Before mounting, the bootstrap
+recognizes the DSU installer's zeroed 4096-byte header and creates the initial
+ext4 filesystem for that new allocation. Existing ext4/F2FS filesystems are
+mounted as they are; mount failure never triggers formatting. Unknown or
+unreadable headers stop boot. Identity and size checks remain, and the owner's
+25 GiB allocation is not resized. There is no physical-userdata fallback.
+The guest receives private BinderFS nodes and a cgroup device filter
 that denies all block-device access. Kernel attachment/namespace behavior
 still needs a phone test; failures stop the handoff. No automatic reboot timer
 is added.
 
-The data policy is unchanged in this update, and the owner's 25 GiB allocation
-was not modified. AOSP's installer clears only the first 4 KiB of writable DSU
-images; the existing whole-mapping-zero check may reject a fresh allocation
-whose later extents are nonzero. The revised logs expose that stop point. No
-new data reset/format authorization or resize option is enabled here.
+The old whole-allocation-zero check rejected the second phone attempt and is
+removed. No phone writes were performed during the read-only capture or the
+offline build. Filesystem initialization occurs only on the next DSU boot
+when the installer-wiped header is recognized; it is not a data-reset fallback.
 
 The current `vendor_dlkm` contains 458 modules, and `system_dlkm` contains
 96 GKI modules, from the newly restored firmware. The October capture is
@@ -251,11 +254,12 @@ python3 op13/verify_multipart.py \
   --output /home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-multipart-new
 ```
 
-Fifteen component checks cover compilation, sanitizer-backed device-filter/
-data-scan tests, rejected non-PID1 invocation, actual ARM64 storage mounts in an
+Sixteen component checks cover compilation, sanitizer-backed device-filter/
+data-header tests, rejected non-PID1 invocation, actual ARM64 storage mounts in an
 isolated namespace, display ABI/mode behavior, actual input-backend
 initialization without HDF, binary policy deltas, and the
-ARM64 formatter on a disposable regular test image. They do not test a phone
+ARM64 formatter using the native library layout on a disposable regular test
+image, including recognition of the resulting ext4 filesystem. They do not test a phone
 boot, real userdata formatting, BPF attachment or display hardware.
 
 The packer checks each output's EROFS consistency and AVB hashtree and tests ZIP
@@ -263,9 +267,10 @@ CRCs. Packed validation checks executable modes/labels, Android mountpoint
 scaffolding, OP13 vendor file contents/symlinks/metadata/capabilities, original
 filesystem block retention elsewhere, archive membership and all 14 current
 input hashes. Full source-policy neverallow compilation is not claimed.
-The mapper/scanner test also checks exact DM discovery, ambiguous mappings,
+The mapper/header test also checks exact DM discovery, ambiguous mappings,
 single-slave layers and rejection of mixed backing devices using temporary
-filesystem fixtures. Real OEM first-stage mounting still needs the next test.
+filesystem fixtures. First-stage mounts were verified by the second phone log;
+the explicit mount fallback itself has not been exercised on the phone.
 
 `manifest.json`, `packed-validation.json`, `SHA256SUMS`, and the component logs
 record the actual scope. `development-key.pem` is a private local key, not an

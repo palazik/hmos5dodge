@@ -120,6 +120,8 @@ def main():
             assert candidate.is_file() and not candidate.is_symlink() and digest(path) == digest(candidate), name
             system_files_checked += 1
     assert digest(before / 'system/bin/init') == digest(after / 'system/bin/hmos-native-init')
+    authorization = after / 'hmos/allow-fresh-userdata'
+    assert not authorization.exists()
     print('PASS original system files/symlinks outside explicit patch paths:', system_files_checked, flush=True)
     base = json.loads((out / 'vendor-base-content.json').read_text())
     unpacked = out / 'verified-vendor-tree'

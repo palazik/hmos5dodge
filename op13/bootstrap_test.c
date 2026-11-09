@@ -96,8 +96,18 @@ static int evaluate(const struct bpf_insn *instructions, size_t count,
     return -1;
 }
 
-int main(void)
+int main(int argc, char **argv)
 {
+    if (argc == 3 && !strcmp(argv[1], "--formatted-image")) {
+        int image = open(argv[2], O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        struct stat st;
+        assert(image >= 0 && !fstat(image, &st) && S_ISREG(st.st_mode));
+        assert(inspect_data_header(image) == DATA_EXT4);
+        close(image);
+        puts("PASS real native-formatter output is recognized as existing ext4, not fresh data");
+        return 0;
+    }
+    assert(argc == 1);
     mapper_fixtures();
     assert(dm_name_valid("dm-0") && dm_name_valid("dm-987"));
     assert(!dm_name_valid("dm-") && !dm_name_valid("userdata") && !dm_name_valid("dm-1/../sda"));
@@ -127,20 +137,29 @@ int main(void)
             assert(evaluate(program, count, (access << 16) | 1, major_number, 7) == 0);
         }
     }
-    char path[] = "/tmp/hmos-zero-scan-XXXXXX";
+    char path[] = "/tmp/hmos-data-header-XXXXXX";
     int file = mkstemp(path);
     assert(file >= 0);
     unlink(path);
     assert(!ftruncate(file, 131073));
-    assert(entirely_zero(file, 131073) == 1);
+    assert(inspect_data_header(file) == DATA_INSTALLER_WIPED);
     assert(pwrite(file, "X", 1, 131072) == 1);
-    assert(entirely_zero(file, 131073) == 0); // must inspect the final byte
-    assert(pwrite(file, "\0", 1, 131072) == 1);
-    assert(pwrite(file, "X", 1, 65536) == 1);
-    assert(entirely_zero(file, 131073) == 0);
-    assert(pwrite(file, "\0", 1, 65536) == 1);
-    assert(entirely_zero(file, 131074) == -1 && errno == EIO); // truncated mapping
+    assert(inspect_data_header(file) == DATA_INSTALLER_WIPED); // normal DSU allocation need not have a zero tail
+    assert(pwrite(file, "X", 1, 4095) == 1);
+    assert(inspect_data_header(file) == DATA_UNKNOWN); // partial/unknown header must not initialize
+    assert(pwrite(file, "\0", 1, 4095) == 1);
+    assert(pwrite(file, "\x53\xef", 2, 1080) == 2);
+    assert(inspect_data_header(file) == DATA_EXT4); // otherwise-zero prefix is still an existing FS
+    assert(pwrite(file, "\0\0", 2, 1080) == 2);
+    assert(pwrite(file, "\x10\x20\xf5\xf2", 4, 1024) == 4);
+    assert(inspect_data_header(file) == DATA_F2FS);
+    assert(pwrite(file, "\0\0\0\0", 4, 1024) == 4);
+    assert(pwrite(file, "X", 1, 0) == 1);
+    assert(inspect_data_header(file) == DATA_UNKNOWN);
+    assert(!ftruncate(file, 4095));
+    assert(inspect_data_header(file) == DATA_READ_ERROR && errno == EIO);
     close(file);
-    puts("PASS exact mapper discovery, one-layer identities, duplicate/mixed mappings rejected, device-filter decisions and complete zero-data scanning; kernel mounts/attachment not tested");
+    assert(inspect_data_header(-1) == DATA_READ_ERROR && errno == EBADF);
+    puts("PASS exact mapper identities, duplicate/mixed mapping rejection, device-filter decisions and DSU wiped/ext4/f2fs/unknown header classification; kernel mounts/attachment not tested");
     return 0;
 }

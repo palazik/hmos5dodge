@@ -49,6 +49,8 @@ def main():
     output.mkdir(parents=True)
     stage = output / 'system-patch'
     shutil.copytree(base / 'system-patch', stage, symlinks=True)
+    authorization = stage / 'hmos/allow-fresh-userdata'
+    authorization.unlink(missing_ok=True)
     startup = None
     if args.startup_dir:
         startup = json.loads((args.startup_dir / 'manifest.json').read_text())
@@ -103,8 +105,12 @@ def main():
     updated.pop('odm_filesystem_base', None)
     updated.pop('packed_validation_file', None)
     updated.pop('last_phone_test', None)
+    updated.pop('userdata_policy_changed', None)
+    updated.pop('fresh_dsu_data_initialization_authorized', None)
     updated.update({'partitions': records, 'zip': package, 'component_validation': components, 'phone_boot_tested': False,
-        'handoff_revision': 2, 'selinux_mode_changed': False,
+        'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
+        'userdata_allocation_resized': False,
+        'handoff_revision': 3, 'selinux_mode_changed': False,
         'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',
         'base_candidate': {'system_sha256': report['partitions']['system']['sha256'], 'packed_validation': base_validation,
                            'last_phone_test': report.get('last_phone_test')},

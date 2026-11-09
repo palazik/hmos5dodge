@@ -11,9 +11,11 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 
 **The candidate has passed offline validation. Boot on OP13 remains unverified.**
 
-The first device attempt stalled at the OnePlus logo with empty pstore.
-The updated bootstrap includes mount fallback and earlier persistent diagnostics;
-see the [fork code review](op13/FORK-REVIEW.md) for the adapted changes.
+The second device log verified all eight DSU mounts and identified an overly
+strict first-boot userdata check. Revision 3 corrects that initialization path;
+an existing filesystem is never reformatted after a mount failure. See
+[DSU userdata startup](op13/DSU-DATA-INITIALIZATION.md) and the
+[fork code review](op13/FORK-REVIEW.md).
 
 - Separate partition images and the DSU ZIP have been built and checked.
 - OP13 vendor contents, permissions, capabilities and symlinks are preserved.

@@ -1,7 +1,8 @@
 /* SPDX-License-Identifier: Apache-2.0
  * Experimental Android first-stage -> full HarmonyOS second-stage handoff.
  * No bootloader/firmware writes or physical userdata fallback.
- * Only an exact, entirely zero-filled userdata_gsi may be initialized.
+ * Initialize only an installer-wiped DSU allocation before mounting it.
+ * A failed mount of an existing filesystem never triggers formatting.
  */
 #define _GNU_SOURCE
 #include <dirent.h>
@@ -535,20 +536,29 @@ static void verify_data_node(int fd, dev_t expected)
     }
 }
 
-static int entirely_zero(int fd, uint64_t bytes)
+enum data_kind { DATA_READ_ERROR = -1, DATA_INSTALLER_WIPED, DATA_EXT4, DATA_F2FS, DATA_UNKNOWN };
+
+static enum data_kind inspect_data_header(int fd)
 {
-    unsigned char buffer[65536];
-    for (uint64_t offset = 0; offset < bytes;) {
-        size_t wanted = bytes - offset < sizeof(buffer) ? bytes - offset : sizeof(buffer);
-        ssize_t got = pread(fd, buffer, wanted, offset);
-        if (got <= 0) { if (!got) errno = EIO; return -1; }
-        for (ssize_t i = 0; i < got; ++i) if (buffer[i]) return 0;
+    unsigned char header[4096];
+    size_t offset = 0;
+    while (offset < sizeof(header)) {
+        ssize_t got = pread(fd, header + offset, sizeof(header) - offset, offset);
+        if (got < 0 && errno == EINTR) continue;
+        if (got <= 0) { if (!got) errno = EIO; return DATA_READ_ERROR; }
         offset += got;
     }
-    return 1;
+    // gsid Format() zeroes this entire header to mark a fresh allocation.
+    bool wiped = true;
+    for (size_t i = 0; i < sizeof(header); ++i) if (header[i]) { wiped = false; break; }
+    if (wiped) return DATA_INSTALLER_WIPED;
+    if (header[1080] == 0x53 && header[1081] == 0xef) return DATA_EXT4;
+    if (header[1024] == 0x10 && header[1025] == 0x20 && header[1026] == 0xf5 && header[1027] == 0xf2)
+        return DATA_F2FS;
+    return DATA_UNKNOWN;
 }
 
-static void initialize_blank_dsu_data(const char *node, dev_t expected)
+static void initialize_new_dsu_data(const char *node, dev_t expected)
 {
     int fd = open(node, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
     if (fd < 0) fatal("DSU data descriptor");
@@ -556,14 +566,12 @@ static void initialize_blank_dsu_data(const char *node, dev_t expected)
     uint64_t bytes = 0;
     if (ioctl(fd, BLKGETSIZE64, &bytes) || bytes < 128ULL * 1024 * 1024 ||
         bytes > 512ULL * 1024 * 1024 * 1024) { errno = EINVAL; fatal("DSU data size"); }
-    // A failed mount is never sufficient reason to format. Keep the existing
-    // whole-mapping check; no new userdata reset/initialization option is enabled.
-    log_line("checking whether the complete %llu MiB userdata_gsi is blank", (unsigned long long)(bytes / 1024 / 1024));
-    int blank = entirely_zero(fd, bytes);
-    if (blank < 0) fatal("blank DSU data scan");
-    if (!blank) { errno = EEXIST; fatal("unmountable nonblank DSU data preserved"); }
+    if (inspect_data_header(fd) != DATA_INSTALLER_WIPED) {
+        errno = EEXIST; fatal("DSU header is not installer-wiped; no initialization");
+    }
     verify_data_node(fd, expected);
-    log_line("entire userdata_gsi mapping is zero-filled; initializing isolated ext4");
+    log_line("first-boot initialization of installer-wiped userdata_gsi; allocation remains %llu MiB",
+             (unsigned long long)(bytes / 1024 / 1024));
     pid_t child = fork();
     if (child < 0) fatal("DSU formatter fork");
     if (!child) {
@@ -580,6 +588,11 @@ static void initialize_blank_dsu_data(const char *node, dev_t expected)
         errno = EIO; fatal("isolated DSU formatter");
     }
     verify_data_node(fd, expected);
+    uint64_t after = 0;
+    if (ioctl(fd, BLKGETSIZE64, &after) || after != bytes || inspect_data_header(fd) != DATA_EXT4) {
+        errno = EIO; fatal("new DSU filesystem or unchanged allocation size verification");
+    }
+    log_line("new DSU ext4 verified; allocation size unchanged");
     close(fd);
 }
 
@@ -592,7 +605,7 @@ int main(int argc, char **argv)
     kmsg = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
     umask(0);
     open_metadata_log();
-    log_line("starting OP13 DSU handoff revision 2; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 3; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
     directory(root, 0755);
@@ -641,8 +654,8 @@ int main(int argc, char **argv)
         rootpath(target, sizeof(target), basics[i].path);
         if (mknod(target, S_IFCHR | 0666, makedev(1, basics[i].minor))) fatal(basics[i].path);
     }
-    // Mount only the exact DSU identity. Existing nonblank data is never
-    // formatted, repaired, or replaced with physical Android storage.
+    // Use only the exact DSU mapping. Decide first-boot initialization from
+    // the installer header before mounting; mount errors never authorize mkfs.
     rootpath(target, sizeof(target), "/dev/block/userdata_gsi");
     if (mknod(target, S_IFBLK | 0600, data)) fatal("DSU data node");
     root_mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL);
@@ -653,13 +666,25 @@ int main(int argc, char **argv)
     if (data_fd < 0) fatal("pin DSU data descriptor");
     verify_data_node(data_fd, data);
     log_line("stage=data-mount; exact userdata_gsi (%u:%u)", major(data), minor(data));
+    enum data_kind data_kind = inspect_data_header(data_fd);
+    if (data_kind == DATA_READ_ERROR) fatal("read DSU data header");
+    if (data_kind == DATA_UNKNOWN) { errno = EINVAL; fatal("unrecognized DSU data header; no formatting"); }
+    if (data_kind == DATA_INSTALLER_WIPED) {
+        log_line("stage=first-data-initialization; Android DSU installer-wiped header detected");
+        initialize_new_dsu_data(target, data);
+        verify_data_node(data_fd, data);
+        data_kind = DATA_EXT4;
+    } else {
+        log_line("existing DSU %s detected; mounting without formatting", data_kind == DATA_EXT4 ? "ext4" : "f2fs");
+    }
     char pinned_data[64];
     snprintf(pinned_data, sizeof(pinned_data), "/proc/self/fd/%d", data_fd);
-    if (mount(pinned_data, data_target, "ext4", MS_NOSUID | MS_NODEV, NULL) &&
-        mount(pinned_data, data_target, "f2fs", MS_NOSUID | MS_NODEV, NULL)) {
-        initialize_blank_dsu_data(target, data);
+    const char *data_filesystem = data_kind == DATA_EXT4 ? "ext4" : "f2fs";
+    if (mount(target, data_target, data_filesystem, MS_NOSUID | MS_NODEV, NULL)) {
+        log_line("DSU %s mount by node failed: errno=%d; retrying same mapping by pinned descriptor", data_filesystem, errno);
         verify_data_node(data_fd, data);
-        if (mount(pinned_data, data_target, "ext4", MS_NOSUID | MS_NODEV, NULL)) fatal("initialized DSU data mount");
+        if (mount(pinned_data, data_target, data_filesystem, MS_NOSUID | MS_NODEV, NULL))
+            fatal("DSU filesystem mount failed; no formatting on mount failure");
     }
     close(data_fd);
     if (unlink(target)) fatal("hide DSU block node");

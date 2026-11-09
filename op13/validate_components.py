@@ -72,12 +72,19 @@ def main():
         file.truncate(64 * 1024 * 1024)
     tests.append(run('arm64-ext4-initialization', ['bwrap', '--die-with-parent', '--unshare-all',
         '--uid', '0', '--gid', '0', '--tmpfs', '/', '--proc', '/proc', '--dev', '/dev',
-        '--tmpfs', '/tmp', '--dir', '/etc', '--ro-bind', WORKSPACE / 'work/inspect/system/system/bin/mke2fs', '/mke2fs',
-        '--bind', bootstrap, '/test', '--ro-bind', SYSROOT, '/runtime', '--ro-bind', qemu, '/qemu',
-        '/qemu', '-L', '/runtime', '-E', 'LD_LIBRARY_PATH=/runtime/usr/lib', '/mke2fs',
+        '--tmpfs', '/tmp', '--dir', '/system/bin', '--dir', '/system/lib',
+        '--ro-bind', WORKSPACE / 'work/inspect/system/system/bin/mke2fs', '/system/bin/mke2fs',
+        '--ro-bind', SYSROOT / 'usr/lib/libc.so', '/system/lib/ld-musl-aarch64.so.1',
+        '--ro-bind', WORKSPACE / 'work/inspect/system/system/lib64', '/system/lib64',
+        '--ro-bind', WORKSPACE / 'work/inspect/system/system/etc', '/system/etc',
+        '--symlink', 'system/lib', '/lib', '--symlink', 'system/lib64', '/lib64',
+        '--symlink', 'system/etc', '/etc', '--clearenv', '--setenv', 'PATH', '/system/bin:/vendor/bin',
+        '--bind', bootstrap, '/test', '--ro-bind', qemu, '/qemu',
+        '/qemu', '/system/bin/mke2fs',
         '-t', 'ext4', '-b', '4096', '-I', '256', '-O', 'encrypt,verity', '-F', '-m', '0',
         '-L', 'hmos-dsu', '/test/test-data.img']))
     tests.append(run('formatted-ext4-consistency', ['e2fsck', '-fn', image]))
+    tests.append(run('formatted-ext4-header-recognition', [bootstrap / 'bootstrap-test', '--formatted-image', image]))
     tests.append(run('startup-audit-regressions', ['python3', '-m', 'unittest', 'discover', '-s', 'op13', '-p', 'test_*.py']))
     image.unlink()
     artifacts = [bootstrap / 'init', storage / 'libop13_local_storage.so',
