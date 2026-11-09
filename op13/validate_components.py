@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+from selinux_config import permissive_config
 
 REPO = Path(__file__).resolve().parents[1]
 WORKSPACE = REPO.parent
@@ -63,6 +64,32 @@ def main():
         '--symlink', 'system/etc', '/etc', '--clearenv', '--setenv', 'PATH', '/system/bin:/vendor/bin',
         '--ro-bind', qemu, '/qemu', '/qemu', '/system/bin/init', '--second-stage', '0']))
     environment = dict(os.environ, SYSROOT=str(SYSROOT))
+    donor_etc = WORKSPACE / 'work/inspect/system/system/etc'
+    (bootstrap / 'config.permissive').write_bytes(permissive_config((donor_etc / 'selinux/config').read_bytes()))
+    tests.append(run('selinux-loader-test-build', ['bash', 'build/ohos-clang', '-O2', '-Wall', '-Wextra', '-Werror',
+        'op13/selinux_loader_test.c', '-Wl,--export-dynamic', '-ldl', '-lc', '-o', bootstrap / 'selinux-loader-test'],
+        env=environment))
+    for suffix, config, cmdline, expected in [
+            ('original-enforcing', donor_etc / 'selinux/config', 'console=fixture androidboot.selinux=permissive', 1),
+            ('preserved-permissive', bootstrap / 'config.permissive', 'console=fixture androidboot.selinux=permissive', 0),
+            ('explicit-enforcing', bootstrap / 'config.permissive', 'console=fixture enforcing=1', 1),
+            ('explicit-permissive', donor_etc / 'selinux/config', 'console=fixture enforcing=0', 0)]:
+        (bootstrap / 'test-cmdline').write_text(cmdline + '\n')
+        tests.append(run('arm64-selinux-' + suffix, ['bwrap', '--die-with-parent', '--unshare-all',
+            '--uid', '0', '--gid', '0', '--tmpfs', '/', '--proc', '/proc', '--dev', '/dev',
+            '--dir', '/system/lib', '--dir', '/system/bin',
+            '--ro-bind', donor_etc, '/system/etc', '--tmpfs', '/system/etc/selinux',
+            '--dir', '/system/etc/selinux/targeted/policy',
+            '--ro-bind', WORKSPACE / 'work/inspect/system/system/lib64', '/system/lib64',
+            '--ro-bind', SYSROOT / 'usr/lib/libc.so', '/system/lib/ld-musl-aarch64.so.1',
+            '--ro-bind', config, '/system/etc/selinux/config',
+            '--ro-bind', WORKSPACE / 'out/op13-policy/policy.31', '/system/etc/selinux/targeted/policy/policy.31',
+            '--ro-bind', bootstrap / 'test-cmdline', '/proc/cmdline',
+            '--symlink', 'system/lib', '/lib', '--symlink', 'system/lib64', '/lib64',
+            '--symlink', 'system/etc', '/etc', '--ro-bind', bootstrap, '/test',
+            '--ro-bind', bootstrap / 'selinux-loader-test', '/system/bin/selinux-loader-test',
+            '--ro-bind', qemu, '/qemu', '--clearenv', '--setenv', 'PATH', '/system/bin',
+            '/qemu', '/system/bin/selinux-loader-test', str(expected)]))
     tests.append(run('storage-library-build', ['bash', 'build/ohos-clang', '-O2', '-fPIC', '-Wall', '-Wextra', '-Werror',
         '-shared', 'op13/local_storage.c', '-Wl,-soname,libop13_local_storage.so', '-Wl,--no-undefined',
         '-ldl', '-lc', '-o', storage / 'libop13_local_storage.so'], env=environment))

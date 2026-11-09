@@ -12,6 +12,7 @@ import subprocess
 import zipfile
 from build_multipart import digest
 from image_utils import filesystem_info
+from selinux_config import permissive_config
 
 
 def remove_readback(target, output):
@@ -133,6 +134,8 @@ def main():
     assert original_init_sha256 == digest(after / 'system/bin/hmos-native-init')
     authorization = after / 'hmos/allow-fresh-userdata'
     assert not authorization.exists()
+    assert (after / 'hmos/policy/config.permissive').read_bytes() == permissive_config(
+        (after / 'system/etc/selinux/config').read_bytes())
     assert (after / 'system/lib/modules').is_symlink()
     assert str((after / 'system/lib/modules').readlink()) == '/system_dlkm/lib/modules'
     lines = (after / 'hmos/modules/load-order').read_text().splitlines()
@@ -159,6 +162,7 @@ def main():
         'system/lib64/libop13_local_storage.so': ('0644', 'system_lib_file'),
         'hmos/startup/init.cfg': ('0644', 'system_etc_file'),
         'hmos/startup/hdf_default.hcb': ('0644', 'chip_prod_file')}
+    expected['hmos/policy/config.permissive'] = ('0644', 'vendor_etc_file')
     for path, (mode, label) in expected.items():
         if sys_owners[path][2] != mode or sys_labels[path] != 'u:object_r:' + label + ':s0':
             raise RuntimeError('incorrect packed system mode/label: ' + path)

@@ -116,3 +116,48 @@ The recorder now also captures bounded PID 1 mountinfo and SELinux context reads
 The same kernel, modules, seven other image payloads and userdata code are retained.
 These corrections address demonstrated bootstrap defects; samgr/Binder behavior,
 native policy loading and full framework boot must still be checked on the phone.
+
+## Revision-6 result and preserving the selected mode
+
+Both complete revision-6 logs were reviewed: bootstrap 331 lines / 13,944 bytes,
+native 746 lines / 29,096 bytes. The older bootstrap history matches the already
+reviewed revision-5 file. The bootstrap mounted and checked the real selinuxfs,
+installed the guest mount root and entered native init. Before policy loading,
+PID 1's mountinfo shows the tmpfs guest root, writable userdata_gsi ext4, private
+BinderFS aliases and the curated read-only partition/config mounts.
+
+The native loader then changes enforcement from 0 to 1, despite the owner
+selecting permissive for the test. The kernel accepts the native policy. The
+recorder subsequently loses access to PID 1 and the kernel stream; its remaining
+snapshots report EACCES until recording expires. This establishes a loss of
+observability, not the exact point where the framework stalls. The native
+namespace round trip after policy loading is not visible in this capture.
+
+The donor's `/system/etc/selinux/config` contains `SELINUX=enforcing`.
+[`GetEnforceConfig` in the native loader](https://github.com/openharmony/security_selinux_adapter/blob/OpenHarmony-5.0.3-Release/interfaces/policycoreutils/src/load_policy.cpp)
+uses its recognized ` enforcing=0/1` command-line argument, then that config.
+Android's `androidboot.selinux` argument is a different key. Initial permissive
+state alone therefore does not keep this native boot permissive.
+
+Revision 7 supplies a read-only `config.permissive` template containing exactly
+one change to the donor config: `SELINUX=enforcing` becomes `SELINUX=permissive`.
+The original config remains intact in system.img. The bootstrap binds the
+template over the native config only when the initial SELinux API reports 0 and
+the native loader has no recognized `enforcing=1` override. When boot starts
+enforcing or has that native override, the original config is retained. No
+command-line text is rewritten. This affects the manual HarmonyOS DSU boot;
+connected-phone operations remain read-only.
+
+Policy loading remains real. Neither native policy binary nor its access rules
+are changed by this update. Permissive mode is a diagnostic boot mode, not a
+claim of a complete enforcing policy port. The kernel/module images, device
+filter, namespace root and userdata code are unchanged.
+
+Four ARM64 tests load the actual donor `libload_policy.z.so` and its real
+libselinux config parser in an empty bubblewrap filesystem. Only the test
+executable's kernel-state/policy-load calls are counter implementations; these
+test symbols are never shipped in the ROM. They demonstrate original enforcing
+selection, preserved permissive selection, and both native command-line
+overrides, while the real loader still requests the prepared policy bytes.
+No host or phone policy is loaded by these offline tests. Packed readback checks
+the template against the unchanged original config and checks its mode/label.

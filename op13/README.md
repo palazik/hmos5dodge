@@ -5,14 +5,15 @@ mechanism. It targets the full supplied HMOS5 framework, SceneBoard and
 SuperLauncher. It is an experimental offline candidate: **no OP13 boot has
 been verified**. The kernel is unchanged.
 
-Revision 5 executed native init and started services. Its complete native log
-exposed a missing selinuxfs API and loss of guest data/device mounts during
-native namespace switches. Revision 6 mounts and checks selinuxfs before init,
-then installs the actual guest mount root with `pivot_root` in a private namespace.
-The local namespace regression reproduces the chroot defect and verifies repeated
-namespace switches retain writable fixture data and the device tree.
-See [NATIVE-STARTUP.md](NATIVE-STARTUP.md). Userdata handling remains as described
-in [DSU-DATA-INITIALIZATION.md](DSU-DATA-INITIALIZATION.md).
+Revision 6 installed the guest mount root and the kernel accepted native SELinux
+policy. The donor loader overrode the initially permissive test using its
+`SELINUX=enforcing` config; subsequent kernel/proc diagnostic access was denied.
+Revision 7 supplies a native permissive config only for an initially permissive
+boot without a recognized native `enforcing=1` override. Native enforcing
+requests retain their behavior. The actual donor loader and config parser pass
+isolated ARM64 tests for both configs and explicit command-line overrides.
+See [NATIVE-STARTUP.md](NATIVE-STARTUP.md). The native policy binaries, kernel,
+modules and [userdata logic](DSU-DATA-INITIALIZATION.md) are unchanged.
 A successful native boot has not been observed. Fork adaptations are documented in
 [FORK-REVIEW.md](FORK-REVIEW.md).
 
@@ -269,11 +270,12 @@ python3 op13/verify_multipart.py \
   --output /home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-multipart-new
 ```
 
-Nineteen component checks cover compilation, sanitizer-backed recorder/device-filter/
+Twenty-four component checks cover compilation, sanitizer-backed recorder/device-filter/
 data-header tests, successful/failed exec-status delivery and output bounds,
 rejected non-PID1 invocation, chroot failure reproduction and pivot-root namespace
 round trips, loading actual donor init with native library paths,
-actual ARM64 storage mounts in an
+four real-donor native SELinux loader/config tests with test-only kernel-call
+counters, actual ARM64 storage mounts in an
 isolated namespace, display ABI/mode behavior, actual input-backend
 initialization without HDF, binary policy deltas, and the
 ARM64 formatter using the native library layout on a disposable regular test

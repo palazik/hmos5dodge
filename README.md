@@ -11,14 +11,14 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 
 **The candidate has passed offline validation. Boot on OP13 remains unverified.**
 
-Revision 5 executed native init and started services. Its logs exposed two
-handoff defects: a missing SELinux filesystem API and a chroot that lost the
-guest mount tree during native namespace switches. Revision 6 mounts and checks
-selinuxfs, then uses `pivot_root` in a private mount namespace. A local regression
-test reproduces the old failure and verifies the new root survives repeated
-namespace switches. See [native startup diagnostics](op13/NATIVE-STARTUP.md).
-Full framework boot remains unresolved. [Userdata handling](op13/DSU-DATA-INITIALIZATION.md)
-and stock kernel/module binaries are unchanged.
+Revision 6 installed the guest mount root and loaded native SELinux policy.
+Its native loader switched the owner's permissive test to enforcing, and
+subsequent diagnostic access was denied. Revision 7 preserves an initially
+permissive boot through the native config while retaining native enforcing
+requests. The actual donor loader/config parser passed isolated ARM64 tests for
+both modes and command-line overrides. See [native startup diagnostics](op13/NATIVE-STARTUP.md).
+Full framework boot remains unresolved. [Userdata handling](op13/DSU-DATA-INITIALIZATION.md),
+the kernel/modules and native policy binaries are unchanged.
 
 - Separate partition images and the DSU ZIP have been built and checked.
 - OP13 vendor contents, permissions, capabilities and symlinks are preserved.

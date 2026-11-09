@@ -160,6 +160,14 @@ static void pivot_native_root(void)
     log_line("native mount root installed; old-root tree detached before namespace switches");
 }
 
+static bool preserve_boot_permissive(const char *enforce, const char *cmdline)
+{
+    // Match the native loader's explicit " enforcing=" override first.
+    // Android's androidboot.selinux key is different. Never rewrite cmdline.
+    const char *override = strstr(cmdline, " enforcing=");
+    return !strcmp(enforce, "0") && (!override || override[11] != '1');
+}
+
 static void mount_native_selinux(void)
 {
     // A new sysfs mount exposes the mountpoint directory, not selinuxfs.
@@ -183,6 +191,15 @@ static void mount_native_selinux(void)
         errno = EINVAL; fatal("native SELinux enforcement API");
     }
     log_line("native SELinux API mounted; kernel policy version=%u; enforcement=%s (unchanged)", version, enforce);
+    rootpath(path, sizeof(path), "/proc/cmdline");
+    char cmdline[16384];
+    if (read_text(path, cmdline, sizeof(cmdline))) fatal("native SELinux boot-mode arguments");
+    if (preserve_boot_permissive(enforce, cmdline)) {
+        root_bind("/hmos/policy/config.permissive", "/system/etc/selinux/config", true);
+        log_line("native SELinux config preserves boot-selected permissive mode; native policy still loads");
+    } else {
+        log_line("native SELinux config retained; enforcing boot state or native enforcing=1 override");
+    }
 }
 
 static void open_metadata_log(void)
@@ -279,7 +296,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 6; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 7; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -905,7 +922,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 6; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 7; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");

@@ -10,6 +10,7 @@ import shutil
 import subprocess
 from build_multipart import command, digest, metadata, patch_image, sign_image, write_package
 from prepare_dlkm import load_report, write_load_plan
+from selinux_config import write_config
 
 
 def main():
@@ -66,6 +67,7 @@ def main():
     if link.is_symlink():
         link.unlink()
     link.symlink_to('/system_dlkm/lib/modules')
+    write_config(root, stage)
     owners, labels = metadata(root, 'system', 'system')
     image = patch_image(root, output, 'system', base / 'system.img', stage, owners, labels, [
         ('/hmos/startup(/.*)?', 'system_etc_file'), ('/hmos/startup/vendor-init(/.*)?', 'vendor_etc_file'),
@@ -110,9 +112,10 @@ def main():
     updated.update({'partitions': records, 'zip': package, 'component_validation': components, 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 6, 'selinux_mode_changed': False,
+        'handoff_revision': 7, 'selinux_mode_changed': False,
         'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',
         'native_mount_root': 'pivot_root in a private mount namespace; old root detached',
+        'native_selinux_config': 'Preserve boot-selected permissive mode through the native config; explicit native enforcing=1 takes precedence',
         'native_selinux_api': 'selinuxfs mounted and API checked before donor init; enforcement unchanged by bootstrap',
         'native_startup_metadata_log': '/metadata/hmos5dodge/native-startup.log',
         'native_startup_recorder': {'maximum_bytes': 4194304, 'duration_seconds': 180,

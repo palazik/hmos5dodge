@@ -1,16 +1,19 @@
-# OP13 handoff revision 6
+# OP13 handoff revision 7
 
-Revision 5 ran native init and started services. Its logs show failure to load
-the native SELinux policy, followed by loss of the guest data/device view during
-native namespace switches. The phone stayed at the OnePlus logo.
+Revision 6 installed the guest mount root and the kernel accepted native SELinux
+policy. Its donor config forced the permissive test into enforcing, after
+which diagnostic access was denied. The later framework state remains unknown.
 
-Revision 6 mounts and checks the SELinux filesystem API and replaces the chroot
-handoff with a real pivot_root in a private mount namespace. A local regression
-reproduces the old namespace failure and verifies guest data/devices survive
-repeated namespace switches after the correction. Full phone boot remains
-unverified. Kernel/module binaries, the hardware startup plan, seven other
-images and userdata handling are unchanged. Only system.img changes.
-See NATIVE-STARTUP.md for evidence, recorder scope and remaining uncertainty.
+Revision 7 preserves the initially selected permissive state through the native
+config, while retaining native enforcing requests and real policy loading.
+A recognized native `enforcing=1` boot argument takes precedence. Both config
+modes and both native argument overrides passed ARM64 tests using the actual
+donor loader/parser; only the test's kernel calls are counters. These test
+implementations are not included in the ROM.
+
+Full phone boot remains unverified. Kernel/module and policy binaries, the
+hardware startup plan, seven other images and userdata handling are unchanged.
+Only system.img changes. See NATIVE-STARTUP.md for evidence and remaining uncertainty.
 
 Install this directory's complete **hmos5-op13-dsu.zip** using DSU Sideloader.
 Choose your desired userdata size in the app; it is not fixed to 25 GiB or
@@ -28,16 +31,18 @@ adb shell "su -c 'cat /metadata/hmos5dodge/bootstrap.log'" > op13-hmos-bootstrap
 adb shell "su -c 'cat /metadata/hmos5dodge/native-startup.log'" > op13-hmos-native-startup.txt
 ```
 
-Find the latest `starting OP13 DSU handoff revision 6` in the bootstrap log;
+Find the latest `starting OP13 DSU handoff revision 7` in the bootstrap log;
 earlier attempts remain above it. The native log contains only the latest
 handoff, bounded to 4 MiB. It should show exec status, subsequent kernel records
 and PID 1 state, now including bounded mountinfo and SELinux-context reads.
-The bootstrap should report the real SELinux API and detached old mount root.
+The bootstrap should report the real SELinux API, which native mode config is
+selected, and the detached old mount root. For the next permissive test, keep
+the DSU app/device permissive setting selected as before.
 Native logs must establish successful policy loading, working sockets, samgr
 and subsequent framework progress. Keep raw captures local. If either file is missing or empty,
 report that too; do not infer a successful native boot from the handoff message.
 
-Nineteen offline component checks and full packed readback are required for
+Twenty-four offline component checks and full packed readback are required for
 delivery. They do not prove native framework boot, rendering, touch or other
 hardware functionality. No connected-phone push, mount, property change,
 module load, reboot, flash or userdata modification is part of preparation.

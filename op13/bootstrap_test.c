@@ -186,6 +186,11 @@ int main(int argc, char **argv)
     assert(argc == 1);
     mapper_fixtures();
     delayed_device_fixture();
+    assert(preserve_boot_permissive("0", "console=tty0 androidboot.selinux=permissive"));
+    assert(!preserve_boot_permissive("1", "console=tty0"));
+    assert(!preserve_boot_permissive("0", "console=tty0 enforcing=1"));
+    assert(preserve_boot_permissive("0", "console=tty0 enforcing=0"));
+    assert(preserve_boot_permissive("0", "console=tty0 androidboot.enforcing=1"));
     recorder_fixture(false, 4095);
     recorder_fixture(true, 4095);
     recorder_fixture(false, 32);

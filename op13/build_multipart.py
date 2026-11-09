@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import zipfile
 from image_utils import check_filesystem
+from selinux_config import write_config
 
 
 def digest(path):
@@ -191,6 +192,7 @@ def main():
         f'ro.system.build.version.security_patch={args.host_security_patch}\n')
     (stage / 'system/build.prop').write_text(props)
     (stage / 'system/etc/prop.default').write_text(props)
+    write_config(workspace, stage)
     owners, labels = metadata(workspace, 'system', 'system')
     # Android SwitchRoot moves its early mounts into the new read-only root.
     # Their mountpoint directories must exist before the system image boots.
@@ -249,9 +251,10 @@ def main():
     report = {'status': 'experimental-op13-only-multipart-dsu', 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 6, 'selinux_mode_changed': False,
+        'handoff_revision': 7, 'selinux_mode_changed': False,
         'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',
         'native_mount_root': 'pivot_root in a private mount namespace; old root detached',
+        'native_selinux_config': 'Preserve boot-selected permissive mode through the native config; explicit native enforcing=1 takes precedence',
         'native_selinux_api': 'selinuxfs mounted and API checked before donor init; enforcement unchanged by bootstrap',
         'native_startup_metadata_log': '/metadata/hmos5dodge/native-startup.log',
         'native_startup_recorder': {'maximum_bytes': 4194304, 'duration_seconds': 180,
