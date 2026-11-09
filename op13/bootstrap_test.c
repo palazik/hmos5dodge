@@ -65,6 +65,34 @@ static void mapper_fixtures(void)
     assert(!rmdir(directory));
 }
 
+static void delayed_device_fixture(void)
+{
+    char directory[] = "/tmp/hmos-device-ready-XXXXXX", path[512];
+    assert(mkdtemp(directory));
+    fixture_path(path, directory, "dev");
+    unsigned maj = 0, min = 0;
+    fixture_text(directory, "dev", "226:0 junk\n");
+    assert(!device_numbers(path, &maj, &min));
+    fixture_text(directory, "dev", "0:0\n");
+    assert(!device_numbers(path, &maj, &min));
+    assert(!unlink(path));
+    pid_t child = fork();
+    assert(child >= 0);
+    if (!child) {
+        struct timespec delay = {.tv_sec = 0, .tv_nsec = 50000000};
+        nanosleep(&delay, NULL);
+        fixture_text(directory, "dev", "226:0\n");
+        _exit(0);
+    }
+    assert(wait_for_device_numbers(path, &maj, &min, 10));
+    assert(maj == 226 && min == 0);
+    int status = 0;
+    assert(waitpid(child, &status, 0) == child && WIFEXITED(status) && WEXITSTATUS(status) == 0);
+    assert(!unlink(path));
+    assert(!wait_for_device_numbers(path, &maj, &min, 2) && errno == ENODEV);
+    assert(!rmdir(directory));
+}
+
 static int evaluate(const struct bpf_insn *instructions, size_t count,
                     uint32_t type, uint32_t major_number, uint32_t minor_number)
 {
@@ -109,6 +137,18 @@ int main(int argc, char **argv)
     }
     assert(argc == 1);
     mapper_fixtures();
+    delayed_device_fixture();
+    char options[256];
+    assert(drm_boot_options("console=tty0 msm_drm.dsi_display0=qcom,panel_A:config0: msm_drm.modeset=0 unrelated.key=x",
+        options, sizeof(options)) == 1);
+    assert(!strcmp(options, "dsi_display0=qcom,panel_A:config0:"));
+    assert(drm_boot_options("msm_drm.dsi_display0=\"panel with spaces\" msm_drm.dsi_display1=secondary",
+        options, sizeof(options)) == 2);
+    assert(!strcmp(options, "dsi_display0=\"panel with spaces\" dsi_display1=secondary"));
+    assert(drm_boot_options("msm_drm.dsi_display00=bad other.dsi_display0=bad", options, sizeof(options)) == 0);
+    assert(!options[0]);
+    assert(drm_boot_options("msm_drm.dsi_display0=toolong", options, 8) == -1 && errno == E2BIG);
+    assert(drm_boot_options("msm_drm.dsi_display0=\"unterminated", options, sizeof(options)) == -1 && errno == EINVAL);
     assert(dm_name_valid("dm-0") && dm_name_valid("dm-987"));
     assert(!dm_name_valid("dm-") && !dm_name_valid("userdata") && !dm_name_valid("dm-1/../sda"));
     assert(module_path_valid("/vendor_dlkm/lib/modules/msm_drm.ko"));

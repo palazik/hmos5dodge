@@ -5,11 +5,12 @@ mechanism. It targets the full supplied HMOS5 framework, SceneBoard and
 SuperLauncher. It is an experimental offline candidate: **no OP13 boot has
 been verified**. The kernel is unchanged.
 
-The second device attempt verified all eight DSU mounts and stopped at the
-bootstrap's overly strict userdata check, before HarmonyOS init. Revision 3
-corrects fresh DSU filesystem startup without a format-on-mount-error path;
-see [DSU-DATA-INITIALIZATION.md](DSU-DATA-INITIALIZATION.md). A successful native
-boot has not been observed. The reviewed fork adaptations are documented in
+Revision 3 passed userdata initialization/mounting and stock module loading,
+then stopped at a missing DRM device before native HarmonyOS init. Revision 4
+forwards the stock DSI panel boot arguments and adds measured hardware
+suppliers and a bounded registration wait; see [DISPLAY-STARTUP.md](DISPLAY-STARTUP.md). Userdata handling remains
+as described in [DSU-DATA-INITIALIZATION.md](DSU-DATA-INITIALIZATION.md).
+A successful native boot has not been observed. Fork adaptations are documented in
 [FORK-REVIEW.md](FORK-REVIEW.md).
 
 The local package is:
@@ -111,7 +112,10 @@ recognizes the DSU installer's zeroed 4096-byte header and creates the initial
 ext4 filesystem for that new allocation. Existing ext4/F2FS filesystems are
 mounted as they are; mount failure never triggers formatting. Unknown or
 unreadable headers stop boot. Identity and size checks remain, and the owner's
-25 GiB allocation is not resized. There is no physical-userdata fallback.
+allocation is not resized. The size is read from the DSU device selected in
+the app, not fixed to 25 GiB; the first-initialization bounds are 128 MiB to
+512 GiB, subject to available space and native storage requirements.
+There is no physical-userdata fallback.
 The guest receives private BinderFS nodes and a cgroup device filter
 that denies all block-device access. Kernel attachment/namespace behavior
 still needs a phone test; failures stop the handoff. No automatic reboot timer
@@ -125,9 +129,11 @@ when the installer-wiped header is recognized; it is not a data-reset fallback.
 The current `vendor_dlkm` contains 458 modules, and `system_dlkm` contains
 96 GKI modules, from the newly restored firmware. The October capture is
 historical evidence and is not a source of modules for this candidate.
-The dependency-ordered 119-module graphics plan reads 58 files directly from
-`vendor_dlkm`; 61 early modules are copied from the new `vendor_boot` ramdisk.
-All 712 checked imports provided by modules in this plan have matching CRCs.
+The dependency-ordered 130-module display plan reads 58 files directly from
+`vendor_dlkm`; 72 early modules are copied from the new `vendor_boot` ramdisk.
+It includes bound hardware supplier modules observed in working Android,
+which symbol-only dependencies missed. All 785 checked imports provided by
+modules in this plan have matching CRCs.
 Already loaded modules are skipped. The standard
 `/system/lib/modules` link points at `/system_dlkm/lib/modules`. Normal kernel
 ABI and signature checks remain enabled, with no force flags. Module-to-module
@@ -242,11 +248,16 @@ python3 op13/prepare_dlkm.py \
   --vendor-boot /home/palaziks/hmosnext5_op13/op13_stock/vendor_boot.img \
   --payload-inventory /home/palaziks/hmosnext5_op13/work/cos16.0.10/manifest-inventory.json \
   --output /home/palaziks/hmosnext5_op13/out/module-audit-new
+python3 op13/plan_display_suppliers.py \
+  --workspace /home/palaziks/hmosnext5_op13 \
+  --audit /home/palaziks/hmosnext5_op13/out/module-audit-new/report.json \
+  --capture /home/palaziks/hmosnext5_op13/work/phone-attempt3-supplier-graph.txt \
+  --output /home/palaziks/hmosnext5_op13/out/module-audit-new/display-report.json
 python3 op13/build_multipart.py \
   --workspace /home/palaziks/hmosnext5_op13 \
   --output /home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-multipart-new \
   --vendor-additions /home/palaziks/hmosnext5_op13/out/op13-vendor-additions-new \
-  --dlkm-audit /home/palaziks/hmosnext5_op13/out/module-audit-new/report.json \
+  --dlkm-audit /home/palaziks/hmosnext5_op13/out/module-audit-new/display-report.json \
   --startup-dir /home/palaziks/hmosnext5_op13/out/op13-startup-new \
   --android-release 16 --android-sdk 36 --host-security-patch 2026-08-01
 python3 op13/verify_multipart.py \
@@ -278,6 +289,12 @@ OEM key. Module providers now come entirely from the updated payload. The older
 `newfiles/`, July-payload extractions and October capture are not used for this
 candidate's modules. Neither `preload` nor `anco_hmos` exists in the
 supplied HMOS5 image set; no substitute image is invented for those HMOS7 names.
+
+The display supplier report is generated with `plan_display_suppliers.py`
+from the verified single-payload module audit and private capture; use it as
+`--dlkm-audit` for the current candidate. [DISPLAY-STARTUP.md](DISPLAY-STARTUP.md)
+records the exact additional drivers and command. Without that step, a freshly
+generated symbol-only audit does not contain the revision-4 supplier plan.
 
 Module inventory and init-mask helpers are included as `inspect_modules.py`,
 `check_module_crcs.py` and `list_init_masks.py`. They use the workspace containing

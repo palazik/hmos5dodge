@@ -5,6 +5,33 @@ import re
 import subprocess
 
 
+def display_supplier_roots(capture):
+    """Read bound module providers observed in the phone's display device links."""
+    providers, nodes, edges = set(), 0, 0
+    display_bound = False
+    for line in capture.read_text().splitlines():
+        row = line.split('|')
+        if row[0] == 'EDGE' and len(row) == 3:
+            edges += 1
+            continue
+        if row[0] != 'NODE' or len(row) != 4 or not row[1].startswith('/sys/devices/'):
+            raise ValueError('invalid display supplier capture')
+        nodes += 1
+        if not row[3]:
+            continue  # built-in providers have no module link
+        match = re.fullmatch(r'/sys/module/([A-Za-z0-9_]+)', row[3])
+        if not match or not row[2].startswith('/sys/bus/'):
+            raise ValueError('invalid bound module provider')
+        providers.add(match[1])
+        if row[2].endswith('/msm_drm') and match[1] == 'msm_drm':
+            display_bound = True
+    if not display_bound or not nodes or not edges:
+        raise ValueError('capture does not show a bound msm_drm and its suppliers')
+    # Register supplier modules before requesting the display/GPU consumers.
+    roots = sorted(providers - {'msm_drm', 'msm_kgsl'}) + ['msm_drm', 'msm_kgsl']
+    return roots, {'bound_provider_modules': sorted(providers), 'node_count': nodes, 'edge_count': edges}
+
+
 def ramdisk_modules(archive, output):
     """Read regular module files only; never extract archive paths or symlinks."""
     data = archive.read_bytes()

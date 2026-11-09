@@ -11,11 +11,12 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 
 **The candidate has passed offline validation. Boot on OP13 remains unverified.**
 
-The second device log verified all eight DSU mounts and identified an overly
-strict first-boot userdata check. Revision 3 corrects that initialization path;
-an existing filesystem is never reformatted after a mount failure. See
-[DSU userdata startup](op13/DSU-DATA-INITIALIZATION.md) and the
-[fork code review](op13/FORK-REVIEW.md).
+Revision 3 passed userdata initialization/mounting and stock module loading,
+then stopped before native init because the DRM device was absent. Revision 4
+forwards the stock DSI panel boot arguments, explicitly includes the display's
+hardware suppliers, and waits for registration;
+see [display startup](op13/DISPLAY-STARTUP.md). Userdata behavior remains as
+documented in [DSU userdata startup](op13/DSU-DATA-INITIALIZATION.md).
 
 - Separate partition images and the DSU ZIP have been built and checked.
 - OP13 vendor contents, permissions, capabilities and symlinks are preserved.
@@ -54,6 +55,7 @@ The OP13 implementation is in [`op13/`](op13/). Its main tools are:
 
 - [`prepare_vendor.py`](op13/prepare_vendor.py): select native HMOS runtime additions.
 - [`prepare_dlkm.py`](op13/prepare_dlkm.py): inspect matching stock module images.
+- [`plan_display_suppliers.py`](op13/plan_display_suppliers.py): add the working phone's display supplier drivers to the audited module plan.
 - [`prune_outputs.py`](op13/prune_outputs.py): keep one validated output set and remove superseded generated images.
 - [`extend_with_dlkm.py`](op13/extend_with_dlkm.py): update an existing candidate with DLKM and omit ODM.
 - [`build_multipart.py`](op13/build_multipart.py): build separate partition images and a DSU ZIP.

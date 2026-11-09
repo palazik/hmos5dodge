@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/klog.h>
 #include <sys/mount.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
@@ -27,6 +28,7 @@
 #include <sys/syscall.h>
 #include <sys/sysmacros.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 static const char *root = "/mnt/hmos-root";
@@ -40,6 +42,27 @@ struct binder_device_request { char name[256]; uint32_t major, minor; };
 #define BINDER_DEVICE_ADD _IOWR('b', 1, struct binder_device_request)
 static struct device devices[128];
 static size_t device_count;
+
+static void save_kernel_tail(void)
+{
+    // Read-only syslog action 3: copy, do not clear or change kernel logging.
+    // Preserve the final probe errors even when this phone leaves pstore empty.
+    if (metalog < 0 || metalog_bytes + 128 >= METALOG_LIMIT) return;
+    char *buffer = malloc(65536);
+    if (!buffer) return;
+    int count = klogctl(3, buffer, 65536);
+    if (count > 0) {
+        const char begin[] = "\n--- kernel tail at bootstrap stop ---\n";
+        ssize_t written = write(metalog, begin, sizeof(begin) - 1);
+        if (written > 0) metalog_bytes += written;
+        size_t length = count;
+        if (length > METALOG_LIMIT - metalog_bytes) length = METALOG_LIMIT - metalog_bytes;
+        written = write(metalog, buffer + count - length, length);
+        if (written > 0) metalog_bytes += written;
+        fdatasync(metalog);
+    }
+    free(buffer);
+}
 
 static void log_line(const char *format, ...)
 {
@@ -61,6 +84,7 @@ static void log_line(const char *format, ...)
 static __attribute__((noreturn)) void fatal(const char *operation)
 {
     log_line("STOP %s: errno=%d (%s); no automatic reboot", operation, errno, strerror(errno));
+    save_kernel_tail();
     if (bootlog >= 0) fdatasync(bootlog);
     if (getpid() != 1) exit(1);
     for (;;) pause();
@@ -282,6 +306,39 @@ static bool module_path_valid(const char *path)
     return true;
 }
 
+static int drm_boot_options(const char *cmdline, char *options, size_t capacity)
+{
+    if (!capacity) { errno = EINVAL; return -1; }
+    options[0] = 0;
+    size_t used = 0;
+    int count = 0;
+    const char *keys[] = {"msm_drm.dsi_display0=", "msm_drm.dsi_display1="};
+    for (const char *p = cmdline; *p;) {
+        while (*p == ' ' || *p == '\t' || *p == '\n') ++p;
+        if (!*p) break;
+        const char *start = p;
+        bool quoted = false;
+        while (*p && (quoted || (*p != ' ' && *p != '\t' && *p != '\n'))) {
+            if (*p == '"') quoted = !quoted;
+            ++p;
+        }
+        if (quoted) { errno = EINVAL; return -1; }
+        for (size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
+            size_t prefix = strlen(keys[i]);
+            if ((size_t)(p - start) < prefix || strncmp(start, keys[i], prefix)) continue;
+            // finit_module takes unprefixed parameter names. No shell runs.
+            size_t length = p - start - strlen("msm_drm.");
+            if (length + (used ? 1 : 0) >= capacity - used) { errno = E2BIG; return -1; }
+            if (used) options[used++] = ' ';
+            memcpy(options + used, start + strlen("msm_drm."), length);
+            used += length;
+            options[used] = 0;
+            ++count;
+        }
+    }
+    return count;
+}
+
 static void load_stock_modules(void)
 {
     FILE *list = fopen("/hmos/modules/load-order", "re");
@@ -307,7 +364,16 @@ static void load_stock_modules(void)
         }
         int fd = open(module_source, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
         if (fd < 0) fatal(module_source);
-        int result = syscall(__NR_finit_module, fd, "", 0); // no force flags
+        char options[4096] = {0};
+        if (!strcmp(name, "msm_drm")) {
+            char cmdline[16384];
+            if (read_text("/proc/cmdline", cmdline, sizeof(cmdline))) fatal("stock DRM boot arguments");
+            if (strlen(cmdline) == sizeof(cmdline) - 1) { errno = E2BIG; fatal("truncated boot arguments"); }
+            int selectors = drm_boot_options(cmdline, options, sizeof(options));
+            if (selectors < 0) fatal("DRM panel parameter parsing");
+            log_line("forwarding %d stock DSI panel selector(s) to msm_drm; values omitted", selectors);
+        }
+        int result = syscall(__NR_finit_module, fd, options, 0); // no force flags
         int saved = errno;
         close(fd);
         errno = saved;
@@ -317,13 +383,36 @@ static void load_stock_modules(void)
     fclose(list);
 }
 
+static bool device_numbers(const char *path, unsigned *major_number, unsigned *minor_number)
+{
+    char numbers[64], extra;
+    unsigned maj, min;
+    if (read_text(path, numbers, sizeof(numbers)) || sscanf(numbers, "%u:%u %c", &maj, &min, &extra) != 2 ||
+        !maj || maj > 4095 || min > 1048575) return false;
+    *major_number = maj; *minor_number = min;
+    return true;
+}
+
+static bool wait_for_device_numbers(const char *path, unsigned *maj, unsigned *min, unsigned attempts)
+{
+    for (unsigned i = 0; i < attempts; ++i) {
+        if (device_numbers(path, maj, min)) return true;
+        if (i + 1 < attempts) {
+            struct timespec delay = {.tv_sec = 0, .tv_nsec = 100000000};
+            while (nanosleep(&delay, &delay) && errno == EINTR) {}
+        }
+    }
+    errno = ENODEV;
+    return false;
+}
+
 static void copy_device(const char *suffix, bool required)
 {
     char original[256], target[512];
     snprintf(original, sizeof(original), "/dev/%s", suffix);
     struct stat st;
     if (stat(original, &st)) {
-        char sysfile[256], numbers[64];
+        char sysfile[256];
         const char *name = strrchr(suffix, '/');
         name = name ? name + 1 : suffix;
         const char *class_name = !strncmp(suffix, "dri/", 4) ? "drm" :
@@ -332,7 +421,8 @@ static void copy_device(const char *suffix, bool required)
             !strcmp(suffix, "kgsl-3d0") ? "kgsl" : "misc";
         snprintf(sysfile, sizeof(sysfile), "/sys/class/%s/%s/dev", class_name, name);
         unsigned major_number = 0, minor_number = 0;
-        if (read_text(sysfile, numbers, sizeof(numbers)) || sscanf(numbers, "%u:%u", &major_number, &minor_number) != 2) {
+        if (required) log_line("waiting up to 10 seconds for required device %s", suffix);
+        if (!wait_for_device_numbers(sysfile, &major_number, &minor_number, required ? 101 : 1)) {
             if (required) fatal(sysfile);
             return;
         }
@@ -605,7 +695,7 @@ int main(int argc, char **argv)
     kmsg = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
     umask(0);
     open_metadata_log();
-    log_line("starting OP13 DSU handoff revision 3; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 4; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
     directory(root, 0755);

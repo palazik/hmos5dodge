@@ -110,13 +110,15 @@ def main():
     updated.update({'partitions': records, 'zip': package, 'component_validation': components, 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 3, 'selinux_mode_changed': False,
+        'handoff_revision': 4, 'selinux_mode_changed': False,
         'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',
         'base_candidate': {'system_sha256': report['partitions']['system']['sha256'], 'packed_validation': base_validation,
                            'last_phone_test': report.get('last_phone_test')},
         'odm_source': 'Existing stock ODM EROFS mounted by Android first-stage; reused read-only',
         'dlkm_inputs': dlkm['images'], 'module_load_plan': dlkm['load_plan'],
         'dlkm_audit_scope': dlkm['scope'], 'captured_vendor_modules_byte_identical': dlkm['captured_vendor_modules_byte_identical']})
+    updated['module_audit'] = {key: dlkm[key] for key in ('scope', 'vendor_boot', 'payload_properties',
+        'crc_checks', 'load_plan_sources', 'vendor_base_sha256', 'display_suppliers') if key in dlkm}
     if startup:
         updated['startup_configuration'] = startup
         updated['known_unverified'] = [item for item in updated['known_unverified'] if 'missing donor libinput_driver' not in item]

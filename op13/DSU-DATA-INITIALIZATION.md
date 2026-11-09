@@ -13,7 +13,10 @@ The writable block device must be the exact `userdata_gsi` mapping. Its identity
 is pinned and rechecked, and the existing size bounds are retained. First
 initialization rechecks the wiped header, runs the native formatter, and checks
 both the resulting ext4 header and unchanged allocation size. The owner's
-25 GiB size is not resized. There is no physical Android userdata alternative.
+size selected in the app is read from the block device and is not resized.
+25 GiB was the tested size, not a fixed requirement; larger and smaller
+allocations are supported within the 128 MiB to 512 GiB initialization bounds
+and normal storage requirements. There is no physical Android userdata alternative.
 
 This initialization creates filesystem metadata in a new DSU data allocation.
 Afterward, normal boot mounts that filesystem and uses it as `/data`. Recreating
@@ -35,6 +38,9 @@ The second phone test verified all eight DSU mounts and stopped at the previous
 whole-allocation-zero check before HarmonyOS init. That check was too strict
 for a normal fresh DSU allocation and is removed. There is no reset or
 format-after-mount-error builder option.
+
+The revision-3 device log confirmed first initialization, unchanged allocation
+size and successful DSU data mounting. Revision 4 leaves this behavior unchanged.
 
 Offline checks cover zero installer headers with nonzero tails, existing ext4
 and F2FS signatures, unknown data and read failures. The real donor formatter
