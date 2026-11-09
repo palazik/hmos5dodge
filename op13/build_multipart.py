@@ -247,6 +247,8 @@ def main():
     print('Writing multipart DSU ZIP', flush=True)
     package = write_package(output, images)
     report = {'status': 'experimental-op13-only-multipart-dsu', 'phone_boot_tested': False,
+        'handoff_revision': 2, 'selinux_mode_changed': False,
+        'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',
         'kernel_modified': False, 'physical_partitions_written': False,
         'vendor_base': 'op13_stock/vendor.img', 'whole_donor_vendor_used': False,
         'odm_source': 'Reuse the existing mounted stock ODM EROFS read-only; no ODM partition in the ZIP',

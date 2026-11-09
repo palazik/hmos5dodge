@@ -11,6 +11,10 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 
 **The candidate has passed offline validation. Boot on OP13 remains unverified.**
 
+The first device attempt stalled at the OnePlus logo with empty pstore.
+The updated bootstrap includes mount fallback and earlier persistent diagnostics;
+see the [fork code review](op13/FORK-REVIEW.md) for the adapted changes.
+
 - Separate partition images and the DSU ZIP have been built and checked.
 - OP13 vendor contents, permissions, capabilities and symlinks are preserved.
 - The kernel is unchanged; initial rendering uses software Mesa.

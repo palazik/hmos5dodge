@@ -31,6 +31,9 @@
 static const char *root = "/mnt/hmos-root";
 static int kmsg = -1;
 static int bootlog = -1;
+static int metalog = -1;
+static size_t metalog_bytes;
+#define METALOG_LIMIT (1024U * 1024U)
 struct device { unsigned major, minor; };
 struct binder_device_request { char name[256]; uint32_t major, minor; };
 #define BINDER_DEVICE_ADD _IOWR('b', 1, struct binder_device_request)
@@ -47,11 +50,17 @@ static void log_line(const char *format, ...)
     dprintf(2, "hmos-op13: %s\n", message);
     if (kmsg >= 0) dprintf(kmsg, "<3>hmos-op13: %s\n", message);
     if (bootlog >= 0) dprintf(bootlog, "%s\n", message);
+    size_t length = strlen(message);
+    if (metalog >= 0 && metalog_bytes + length + 1 <= METALOG_LIMIT) {
+        if (dprintf(metalog, "%s\n", message) >= 0) metalog_bytes += length + 1;
+        fdatasync(metalog);
+    }
 }
 
 static __attribute__((noreturn)) void fatal(const char *operation)
 {
     log_line("STOP %s: errno=%d (%s); no automatic reboot", operation, errno, strerror(errno));
+    if (bootlog >= 0) fdatasync(bootlog);
     if (getpid() != 1) exit(1);
     for (;;) pause();
 }
@@ -113,39 +122,116 @@ static void root_mount(const char *source, const char *suffix, const char *type,
     if (mount(source, target, type, flags, options)) fatal(target);
 }
 
-static void verify_dsu_mount(const char *source, const char *expected)
+static void open_metadata_log(void)
+{
+    // A bounded diagnostic in the already mounted host metadata filesystem.
+    // This mount is never exposed in the guest. Missing metadata is nonfatal.
+    struct stat metadata, system;
+    if (stat("/metadata", &metadata) || stat("/", &system) || metadata.st_dev == system.st_dev) return;
+    int parent = open("/metadata", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (parent < 0) return;
+    if (mkdirat(parent, "hmos5dodge", 0700) && errno != EEXIST) { close(parent); return; }
+    int directory_fd = openat(parent, "hmos5dodge", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    close(parent);
+    if (directory_fd < 0) return;
+    struct stat st;
+    if (fstat(directory_fd, &st) || st.st_uid || (st.st_mode & 0777) != 0700) { close(directory_fd); return; }
+    int fd = openat(directory_fd, "bootstrap.log", O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0600);
+    close(directory_fd);
+    if (fd < 0) return;
+    if (fstat(fd, &st) || !S_ISREG(st.st_mode) || st.st_uid || st.st_nlink != 1 ||
+        (st.st_mode & 0777) != 0600 || st.st_size < 0 || st.st_size >= METALOG_LIMIT) { close(fd); return; }
+    metalog = fd;
+    metalog_bytes = st.st_size;
+}
+
+static bool dm_name_valid(const char *name);
+
+static bool dm_identity_matches_at(const char *device_directory, const char *expected)
+{
+    char path[768], name[128];
+    if (snprintf(path, sizeof(path), "%s/dm/name", device_directory) >= (int)sizeof(path)) return false;
+    if (!read_text(path, name, sizeof(name)) && !strcmp(name, expected)) return true;
+    snprintf(path, sizeof(path), "%s/slaves", device_directory);
+    DIR *slaves = opendir(path);
+    if (!slaves) return false;
+    unsigned count = 0, matching = 0;
+    struct dirent *entry;
+    while ((entry = readdir(slaves))) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        ++count;
+        snprintf(path, sizeof(path), "%s/slaves/%.128s/dm/name", device_directory, entry->d_name);
+        if (!read_text(path, name, sizeof(name)) && !strcmp(name, expected)) ++matching;
+    }
+    closedir(slaves);
+    return count == 1 && matching == 1;
+}
+
+static bool is_dsu_mount(const char *source, const char *expected)
 {
     struct stat st;
     struct statvfs fs;
     if (stat(source, &st) || !S_ISDIR(st.st_mode) || statvfs(source, &fs) || !(fs.f_flag & ST_RDONLY)) {
-        errno = ENODEV; fatal("read-only DSU partition mount required");
+        return false;
     }
-    char path[512], name[128];
-    snprintf(path, sizeof(path), "/sys/dev/block/%u:%u/dm/name", major(st.st_dev), minor(st.st_dev));
-    if (read_text(path, name, sizeof(name))) fatal("DSU partition mapper identity");
-    if (!strcmp(name, expected)) return;
-    // Android may put a dm-verity device above the exact *_gsi mapping.
-    // Accept one extra DM layer only when its sole slave is that mapping.
-    snprintf(path, sizeof(path), "/sys/dev/block/%u:%u/slaves", major(st.st_dev), minor(st.st_dev));
-    DIR *slaves = opendir(path);
-    if (!slaves) fatal("DSU verified mapper slaves");
+    char path[512];
+    snprintf(path, sizeof(path), "/sys/dev/block/%u:%u", major(st.st_dev), minor(st.st_dev));
+    return dm_identity_matches_at(path, expected);
+}
+
+static dev_t find_exact_dm_at(const char *block_directory, const char *expected)
+{
+    DIR *directory_fd = opendir(block_directory);
+    if (!directory_fd) return 0;
+    dev_t found = 0;
     struct dirent *entry;
-    unsigned count = 0, matching = 0;
-    while ((entry = readdir(slaves))) {
-        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
-        ++count;
-        snprintf(path, sizeof(path), "/sys/class/block/%.128s/dm/name", entry->d_name);
-        if (!read_text(path, name, sizeof(name)) && !strcmp(name, expected)) ++matching;
+    while ((entry = readdir(directory_fd))) {
+        if (!dm_name_valid(entry->d_name)) continue;
+        char path[768], name[128], numbers[64], extra;
+        snprintf(path, sizeof(path), "%s/%.64s/dm/name", block_directory, entry->d_name);
+        if (read_text(path, name, sizeof(name)) || strcmp(name, expected)) continue;
+        snprintf(path, sizeof(path), "%s/%.64s/dev", block_directory, entry->d_name);
+        unsigned major_number, minor_number;
+        if (read_text(path, numbers, sizeof(numbers)) ||
+            sscanf(numbers, "%u:%u %c", &major_number, &minor_number, &extra) != 2 || !major_number) {
+            closedir(directory_fd); errno = EINVAL; return 0;
+        }
+        if (found) { closedir(directory_fd); errno = EEXIST; return 0; }
+        found = makedev(major_number, minor_number);
     }
-    closedir(slaves);
-    if (count != 1 || matching != 1) { errno = ENODEV; fatal("partition is not backed by expected DSU mapping"); }
+    closedir(directory_fd);
+    if (!found) errno = ENODEV;
+    return found;
 }
 
 static void dsu_bind(const char *source, const char *target, const char *expected)
 {
-    verify_dsu_mount(source, expected);
-    root_bind(source, target, true);
-    log_line("bound separate DSU partition %s from %s", expected, source);
+    if (is_dsu_mount(source, expected)) {
+        root_bind(source, target, true);
+        log_line("bound separate DSU partition %s from %s", expected, source);
+        return;
+    }
+    // Some OEM first-stage implementations map extra images without mounting
+    // them. Mount only the exact named DSU mapping, never a stock partition or
+    // a same-filesystem placeholder directory. All eight parts remain required.
+    dev_t device = find_exact_dm_at("/sys/block", expected);
+    if (!device) fatal(expected);
+    char node[512], destination[512];
+    rootpath(node, sizeof(node), "/.dsu-mount-node");
+    rootpath(destination, sizeof(destination), target);
+    if (mknod(node, S_IFBLK | 0600, device)) fatal("temporary DSU read-only source");
+    log_line("mounting mapped DSU partition %s (%u:%u)", expected, major(device), minor(device));
+    int result = mount(node, destination, "erofs", MS_RDONLY | MS_NODEV | MS_NOSUID, NULL);
+    if (result) {
+        log_line("EROFS mount %s failed: errno=%d; trying ext4 without journal replay", expected, errno);
+        result = mount(node, destination, "ext4", MS_RDONLY | MS_NODEV | MS_NOSUID, "noload");
+    }
+    int saved = errno;
+    if (unlink(node)) fatal("remove temporary DSU source");
+    errno = saved;
+    if (result) fatal(expected);
+    if (!is_dsu_mount(destination, expected)) { errno = ENODEV; fatal("mounted DSU identity verification"); }
+    log_line("mounted separate DSU partition %s at %s", expected, target);
 }
 
 static bool dm_name_valid(const char *name)
@@ -212,8 +298,14 @@ static void load_stock_modules(void)
         char path[256];
         snprintf(path, sizeof(path), "/sys/module/%s", name);
         if (!access(path, F_OK)) continue;
-        int fd = open(source, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-        if (fd < 0) fatal(source);
+        char mounted_source[768];
+        const char *module_source = source;
+        if (strncmp(source, "/hmos/modules/", 14)) {
+            rootpath(mounted_source, sizeof(mounted_source), source);
+            module_source = mounted_source;
+        }
+        int fd = open(module_source, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (fd < 0) fatal(module_source);
         int result = syscall(__NR_finit_module, fd, "", 0); // no force flags
         int saved = errno;
         close(fd);
@@ -251,7 +343,11 @@ static void copy_device(const char *suffix, bool required)
     char relative[256];
     snprintf(relative, sizeof(relative), "/dev/%s", suffix);
     rootpath(target, sizeof(target), relative);
-    if (mknod(target, S_IFCHR | 0666, st.st_rdev)) fatal(target);
+    if (mknod(target, S_IFCHR | 0666, st.st_rdev)) {
+        struct stat existing;
+        if (errno != EEXIST || lstat(target, &existing) || !S_ISCHR(existing.st_mode) || existing.st_rdev != st.st_rdev)
+            fatal(target);
+    }
     if (!strncmp(suffix, "dri/", 4)) {
         if (chown(target, 0, 1003) || chmod(target, 0660)) fatal("DRM device ownership");
     }
@@ -460,8 +556,9 @@ static void initialize_blank_dsu_data(const char *node, dev_t expected)
     uint64_t bytes = 0;
     if (ioctl(fd, BLKGETSIZE64, &bytes) || bytes < 128ULL * 1024 * 1024 ||
         bytes > 512ULL * 1024 * 1024 * 1024) { errno = EINVAL; fatal("DSU data size"); }
-    // A failed mount is never sufficient reason to format. Scan the entire
-    // exact mapping and refuse if even one nonzero byte exists anywhere.
+    // A failed mount is never sufficient reason to format. Keep the existing
+    // whole-mapping check; no new userdata reset/initialization option is enabled.
+    log_line("checking whether the complete %llu MiB userdata_gsi is blank", (unsigned long long)(bytes / 1024 / 1024));
     int blank = entirely_zero(fd, bytes);
     if (blank < 0) fatal("blank DSU data scan");
     if (!blank) { errno = EEXIST; fatal("unmountable nonblank DSU data preserved"); }
@@ -477,8 +574,9 @@ static void initialize_blank_dsu_data(const char *node, dev_t expected)
         execve(args[0], args, environment);
         _exit(126);
     }
-    int status;
+    int status = 0;
     if (waitpid(child, &status, 0) != child || !WIFEXITED(status) || WEXITSTATUS(status)) {
+        log_line("isolated mke2fs wait status=0x%x", status);
         errno = EIO; fatal("isolated DSU formatter");
     }
     verify_data_node(fd, expected);
@@ -493,7 +591,8 @@ int main(int argc, char **argv)
     }
     kmsg = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
     umask(0);
-    log_line("starting experimental stock-kernel DSU handoff");
+    open_metadata_log();
+    log_line("starting OP13 DSU handoff revision 2; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
     directory(root, 0755);
@@ -534,6 +633,14 @@ int main(int argc, char **argv)
     root_mount("tmpfs", "/dev", "tmpfs", MS_NOSUID, "mode=0755");
     root_directory("/dev/block", 0700);
     root_directory("/dev/unix", 0755);
+    // The native formatter runs before the complete device namespace exists.
+    // It needs real random/null devices for UUID generation and normal stdio.
+    const struct { const char *path; unsigned minor; } basics[] = {
+        {"/dev/null", 3}, {"/dev/zero", 5}, {"/dev/random", 8}, {"/dev/urandom", 9}};
+    for (size_t i = 0; i < sizeof(basics) / sizeof(basics[0]); ++i) {
+        rootpath(target, sizeof(target), basics[i].path);
+        if (mknod(target, S_IFCHR | 0666, makedev(1, basics[i].minor))) fatal(basics[i].path);
+    }
     // Mount only the exact DSU identity. Existing nonblank data is never
     // formatted, repaired, or replaced with physical Android storage.
     rootpath(target, sizeof(target), "/dev/block/userdata_gsi");
@@ -545,6 +652,7 @@ int main(int argc, char **argv)
     int data_fd = open(target, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
     if (data_fd < 0) fatal("pin DSU data descriptor");
     verify_data_node(data_fd, data);
+    log_line("stage=data-mount; exact userdata_gsi (%u:%u)", major(data), minor(data));
     char pinned_data[64];
     snprintf(pinned_data, sizeof(pinned_data), "/proc/self/fd/%d", data_fd);
     if (mount(pinned_data, data_target, "ext4", MS_NOSUID | MS_NODEV, NULL) &&
@@ -561,7 +669,9 @@ int main(int argc, char **argv)
     bootlog = open(target, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
     if (bootlog < 0) fatal("persistent bootstrap log");
     log_line("persistent data mounted exclusively from userdata_gsi");
+    log_line("stage=stock-modules");
     load_stock_modules();
+    log_line("stage=device-namespace");
     device_namespace();
     const char *brightness = "/sys/class/backlight/panel0-backlight/brightness";
     if (!access(brightness, F_OK)) {
@@ -581,6 +691,7 @@ int main(int argc, char **argv)
     root_bind("/hmos/display/libdisplay_composer_vdi_impl.z.so", "/vendor/lib64/libdisplay_composer_vdi_impl.z.so", true);
     root_bind("/hmos/ui/display_manager_config.xml", "/sys_prod/etc/window/resources/display_manager_config.xml", true);
     root_bind("/hmos/ui/hgm_policy_config.xml", "/sys_prod/etc/graphic/hgm_policy_config.xml", true);
+    log_line("stage=device-filter");
     isolate_devices();
     // No automatic critical-service reboot or raw-I/O/module privilege after
     // the curated stock module load. Native storage still retains SYS_ADMIN.
@@ -596,11 +707,18 @@ int main(int argc, char **argv)
     if (chdir(root) || chroot(".") || chdir("/")) fatal("chroot");
     // Include inherited first-stage fds in the close, not only our own fds.
     if (syscall(__NR_close_range, 3U, ~0U, 0)) fatal("close inherited descriptors");
-    kmsg = bootlog = -1;
-    int null = open("/dev/null", O_RDWR);
+    kmsg = bootlog = metalog = -1;
+    int null = open("/dev/null", O_RDONLY | O_CLOEXEC);
     if (null < 0) fatal("guest null device");
-    for (int fd = 0; fd < 3; ++fd) if (dup2(null, fd) < 0) fatal("guest stdio");
+    if (dup2(null, 0) < 0) fatal("guest stdin");
     if (null > 2) close(null);
+    // Adapted from the giuliac fork: keep native init diagnostics visible.
+    // Reopen inside the guest after closing all old-root descriptors.
+    int output = open("/dev/kmsg", O_WRONLY | O_CLOEXEC);
+    if (output < 0) output = open("/data/hmos-port/native-init.log", O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW | O_CLOEXEC, 0600);
+    if (output < 0) fatal("native init diagnostic stream");
+    if (dup2(output, 1) < 0 || dup2(output, 2) < 0) fatal("guest diagnostic stdio");
+    if (output > 2) close(output);
     // No old-root directory fd or block fd is inherited by the native graph.
     char *const init_args[] = {"/system/bin/init", "--second-stage", "0", NULL};
     char *const environment[] = {"PATH=/system/bin:/vendor/bin", "OHOS_MESA_SOFTWARE=true", NULL};

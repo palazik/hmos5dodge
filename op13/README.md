@@ -5,6 +5,11 @@ mechanism. It targets the full supplied HMOS5 framework, SceneBoard and
 SuperLauncher. It is an experimental offline candidate: **no OP13 boot has
 been verified**. The kernel is unchanged.
 
+The first device attempt stopped at the OnePlus logo and left no pstore log.
+The revised bootstrap adds explicit DSU mount fallback and earlier diagnostics;
+its changes and the six reviewed fork commits are documented in
+[FORK-REVIEW.md](FORK-REVIEW.md). A later successful boot has not been observed.
+
 The local package is:
 `/home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-current/hmos5-op13-dsu.zip`.
 Earlier candidates have been superseded. Generated images and archives are
@@ -43,8 +48,9 @@ original stock inputs now live together in `op13_stock/`; obsolete vendor
 and vendor_boot files there were replaced by the authorized refresh.
 
 No `boot`, `init_boot`, `vendor_boot`, `dtbo`, physical `vbmeta`, bootloader or
-firmware-partition image is included or flashed. No phone has been contacted,
-rebooted or wiped by the build tools. UEFI boot is not implemented here.
+firmware-partition image is included or flashed. The phone was inspected with
+read-only ADB commands; no mount, push, property change, reboot or flash was
+performed on it. UEFI boot is not implemented here.
 
 ## OP13 vendor base
 
@@ -81,11 +87,16 @@ See [INPUT-PATH.md](INPUT-PATH.md) for the inspected interfaces and test scope.
 
 ## Boot and data handoff
 
-Android first-stage mounts the separate DSU partitions. A static ARM64 init
+Android first-stage maps the separate DSU images and normally synthesizes
+fstab entries and mounts them, including names absent from stock fstab. A static ARM64 init
 entry accepts only PID 1 with the `selinux_setup` argument. It verifies read-only
 partition mounts against their exact `*_gsi` mappings, allowing a single
 verified-device layer above each mapping. These names are Android's internal
-DSU convention, not a claim this port works on other devices.
+DSU convention, not a claim this port works on other devices. If an OEM
+first-stage leaves an image unmounted, the bootstrap mounts that exact
+`*_gsi` mapping read-only and rechecks its identity. It does not accept a
+same-filesystem placeholder directory. Ext4 fallback disables journal replay.
+The fallback does not create a dm-verity layer or authenticate image footers.
 
 The bootstrap binds all eight DSU partition trees and the read-only host ODM
 into a native root and starts
@@ -101,6 +112,12 @@ fallback. The guest receives private BinderFS nodes and a cgroup device filter
 that denies all block-device access. Kernel attachment/namespace behavior
 still needs a phone test; failures stop the handoff. No automatic reboot timer
 is added.
+
+The data policy is unchanged in this update, and the owner's 25 GiB allocation
+was not modified. AOSP's installer clears only the first 4 KiB of writable DSU
+images; the existing whole-mapping-zero check may reject a fresh allocation
+whose later extents are nonzero. The revised logs expose that stop point. No
+new data reset/format authorization or resize option is enabled here.
 
 The current `vendor_dlkm` contains 458 modules, and `system_dlkm` contains
 96 GKI modules, from the newly restored firmware. The October capture is
@@ -162,17 +179,23 @@ References: [AOSP multipart DSU](https://source.android.com/docs/core/ota/dynami
 Select **hmos5-op13-dsu.zip**, rather than an individual system.img, in
 [DSU Sideloader](https://github.com/VegaBobo/DSU-Sideloader#how-to-use). It documents
 support for multipart DSU ZIPs. Keep automatic partition sizes and allocate
-separate DSU userdata, initially 16 GiB. The phone must already have an unlocked
+separate DSU userdata; the owner selected 25 GiB. This update does not change
+that allocation. The phone must already have an unlocked
 bootloader and enough free storage for all eight images, userdata and temporary
 installation files. Keep the first attempt a one-shot boot.
 
 Save loader diagnostics before reboot. Native ADB/HDC USB is unverified.
-Bootstrap messages use `hmos-op13` in kernel logs, and append to the **DSU**
+Bootstrap messages use `hmos-op13` in kernel logs. Before data mounts, they
+also append to `/metadata/hmos5dodge/bootstrap.log` on the existing metadata
+mount, if available. This root-only log is bounded to 1 MiB and is not exposed
+in the guest. This diagnostic file is written by the next DSU boot, not by the
+read-only ADB capture. Messages also append to the **DSU**
 filesystem at `/data/hmos-port/bootstrap.log` once its data mount succeeds.
 That is not Android's normal `/data`. After returning to rooted Android, any
 retained pstore logs may help identify an early failure:
 
 ```sh
+adb shell "su -c 'cat /metadata/hmos5dodge/bootstrap.log'" > op13-hmos-bootstrap.txt
 adb shell su -c 'ls -l /sys/fs/pstore'
 adb shell su -c 'cat /sys/fs/pstore/console-ramoops*' > op13-hmos-kernel.txt
 ```
@@ -240,6 +263,9 @@ CRCs. Packed validation checks executable modes/labels, Android mountpoint
 scaffolding, OP13 vendor file contents/symlinks/metadata/capabilities, original
 filesystem block retention elsewhere, archive membership and all 14 current
 input hashes. Full source-policy neverallow compilation is not claimed.
+The mapper/scanner test also checks exact DM discovery, ambiguous mappings,
+single-slave layers and rejection of mixed backing devices using temporary
+filesystem fixtures. Real OEM first-stage mounting still needs the next test.
 
 `manifest.json`, `packed-validation.json`, `SHA256SUMS`, and the component logs
 record the actual scope. `development-key.pem` is a private local key, not an

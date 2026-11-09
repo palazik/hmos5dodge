@@ -25,7 +25,7 @@ def main():
         parser.error('use a new empty workspace/out directory')
     report = json.loads((base / 'manifest.json').read_text())
     base_validation = json.loads((base / 'packed-validation.json').read_text())
-    if report['phone_boot_tested'] or not base_validation['passed']:
+    if not base_validation['passed']:
         raise RuntimeError('expected the validated experimental base candidate')
     old_parts = {'system', 'vendor', 'odm', 'sys_prod', 'chip_prod', 'cust', 'patch_hw'}
     current_parts = (old_parts - {'odm'}) | {'vendor_dlkm', 'system_dlkm'}
@@ -102,8 +102,12 @@ def main():
     updated = copy.deepcopy(report)
     updated.pop('odm_filesystem_base', None)
     updated.pop('packed_validation_file', None)
-    updated.update({'partitions': records, 'zip': package, 'component_validation': components,
-        'base_candidate': {'system_sha256': report['partitions']['system']['sha256'], 'packed_validation': base_validation},
+    updated.pop('last_phone_test', None)
+    updated.update({'partitions': records, 'zip': package, 'component_validation': components, 'phone_boot_tested': False,
+        'handoff_revision': 2, 'selinux_mode_changed': False,
+        'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',
+        'base_candidate': {'system_sha256': report['partitions']['system']['sha256'], 'packed_validation': base_validation,
+                           'last_phone_test': report.get('last_phone_test')},
         'odm_source': 'Existing stock ODM EROFS mounted by Android first-stage; reused read-only',
         'dlkm_inputs': dlkm['images'], 'module_load_plan': dlkm['load_plan'],
         'dlkm_audit_scope': dlkm['scope'], 'captured_vendor_modules_byte_identical': dlkm['captured_vendor_modules_byte_identical']})

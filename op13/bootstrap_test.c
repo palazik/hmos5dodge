@@ -7,6 +7,64 @@
 #undef main
 #include <assert.h>
 
+static void fixture_path(char path[512], const char *base, const char *suffix)
+{
+    assert(snprintf(path, 512, "%s/%s", base, suffix) < 512);
+}
+
+static void fixture_directory(const char *base, const char *suffix)
+{
+    char path[512]; fixture_path(path, base, suffix); assert(!mkdir(path, 0700));
+}
+
+static void fixture_text(const char *base, const char *suffix, const char *text)
+{
+    char path[512]; fixture_path(path, base, suffix);
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+    assert(fd >= 0 && write(fd, text, strlen(text)) == (ssize_t)strlen(text));
+    assert(!close(fd));
+}
+
+static void mapper_fixtures(void)
+{
+    char directory[] = "/tmp/hmos-mapper-XXXXXX", path[512];
+    assert(mkdtemp(directory));
+    fixture_directory(directory, "dm-0"); fixture_directory(directory, "dm-0/dm");
+    fixture_text(directory, "dm-0/dm/name", "system_gsi\n");
+    fixture_text(directory, "dm-0/dev", "254:42\n");
+    assert(find_exact_dm_at(directory, "system_gsi") == makedev(254, 42));
+    assert(!find_exact_dm_at(directory, "userdata_gsi") && errno == ENODEV);
+    fixture_directory(directory, "dm-1"); fixture_directory(directory, "dm-1/dm");
+    fixture_text(directory, "dm-1/dm/name", "system_gsi\n");
+    fixture_text(directory, "dm-1/dev", "254:43\n");
+    assert(!find_exact_dm_at(directory, "system_gsi") && errno == EEXIST);
+    fixture_text(directory, "dm-1/dm/name", "userdata_backup\n");
+    assert(!find_exact_dm_at(directory, "userdata_gsi") && errno == ENODEV);
+    assert(find_exact_dm_at(directory, "system_gsi") == makedev(254, 42));
+    fixture_path(path, directory, "dm-0");
+    assert(dm_identity_matches_at(path, "system_gsi"));
+    assert(!dm_identity_matches_at(path, "vendor_gsi"));
+    fixture_directory(directory, "dm-2"); fixture_directory(directory, "dm-2/dm");
+    fixture_directory(directory, "dm-2/slaves");
+    fixture_text(directory, "dm-2/dm/name", "verity-layer\n");
+    fixture_path(path, directory, "dm-2/slaves/dm-0"); assert(!symlink("../../dm-0", path));
+    fixture_path(path, directory, "dm-2");
+    assert(dm_identity_matches_at(path, "system_gsi"));
+    fixture_path(path, directory, "dm-2/slaves/dm-1"); assert(!symlink("../../dm-1", path));
+    fixture_path(path, directory, "dm-2");
+    assert(!dm_identity_matches_at(path, "system_gsi")); // mixed backing devices rejected
+    const char *files[] = {"dm-0/dm/name", "dm-0/dev", "dm-1/dm/name", "dm-1/dev",
+        "dm-2/dm/name", "dm-2/slaves/dm-0", "dm-2/slaves/dm-1"};
+    for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); ++i) {
+        fixture_path(path, directory, files[i]); assert(!unlink(path));
+    }
+    const char *dirs[] = {"dm-0/dm", "dm-0", "dm-1/dm", "dm-1", "dm-2/slaves", "dm-2/dm", "dm-2"};
+    for (size_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); ++i) {
+        fixture_path(path, directory, dirs[i]); assert(!rmdir(path));
+    }
+    assert(!rmdir(directory));
+}
+
 static int evaluate(const struct bpf_insn *instructions, size_t count,
                     uint32_t type, uint32_t major_number, uint32_t minor_number)
 {
@@ -40,6 +98,7 @@ static int evaluate(const struct bpf_insn *instructions, size_t count,
 
 int main(void)
 {
+    mapper_fixtures();
     assert(dm_name_valid("dm-0") && dm_name_valid("dm-987"));
     assert(!dm_name_valid("dm-") && !dm_name_valid("userdata") && !dm_name_valid("dm-1/../sda"));
     assert(module_path_valid("/vendor_dlkm/lib/modules/msm_drm.ko"));
@@ -82,6 +141,6 @@ int main(void)
     assert(pwrite(file, "\0", 1, 65536) == 1);
     assert(entirely_zero(file, 131074) == -1 && errno == EIO); // truncated mapping
     close(file);
-    puts("PASS device-filter decisions, invalid mapper names and complete zero-data scanning; kernel attachment not tested");
+    puts("PASS exact mapper discovery, one-layer identities, duplicate/mixed mappings rejected, device-filter decisions and complete zero-data scanning; kernel mounts/attachment not tested");
     return 0;
 }
