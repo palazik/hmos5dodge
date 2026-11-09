@@ -38,6 +38,17 @@ def main():
         '-Wall', '-Wextra', '-Werror', 'op13/bootstrap_test.c', '-o', bootstrap / 'bootstrap-test']))
     tests.append(run('device-filter-and-data-scan', [bootstrap / 'bootstrap-test']))
     tests.append(run('bootstrap-refuses-non-handoff', [qemu, bootstrap / 'init', '--not-pid1'], expected=2))
+    tests.append(run('namespace-test-build', ['clang', '-O2', '-Wall', '-Wextra', '-Werror',
+        'op13/namespace_test.c', '-o', bootstrap / 'namespace-test']))
+    (bootstrap / 'namespace-marker').touch()
+    tests.append(run('native-mount-root-round-trip', ['bwrap', '--die-with-parent', '--unshare-all',
+        '--uid', '0', '--gid', '0', '--cap-add', 'CAP_SYS_ADMIN', '--cap-add', 'CAP_SYS_CHROOT',
+        '--tmpfs', '/', '--proc', '/proc',
+        '--dev', '/dev', '--dir', '/test',
+        '--ro-bind', bootstrap / 'namespace-marker', '/hmos-namespace-test',
+        '--ro-bind', bootstrap / 'namespace-test', '/test/namespace-test',
+        '--ro-bind', '/usr/lib', '/usr/lib', '--symlink', 'usr/lib', '/lib',
+        '--symlink', 'usr/lib', '/lib64', '/test/namespace-test']))
     # Run the actual donor init with its native loader/search paths. Bwrap's
     # reaper remains PID 1, so donor init reaches its non-PID1 refusal instead
     # of starting services. No LD_LIBRARY_PATH or substituted libc is used.

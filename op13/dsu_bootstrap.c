@@ -150,6 +150,41 @@ static void root_mount(const char *source, const char *suffix, const char *type,
     if (mount(source, target, type, flags, options)) fatal(target);
 }
 
+static void pivot_native_root(void)
+{
+    // chroot alone leaves the mount namespace rooted at Android's first-stage
+    // filesystem. Native mksandbox/setns restores that namespace root, hiding
+    // our data, devices and overlays. Give the namespace its actual guest root.
+    if (chdir(root) || syscall(__NR_pivot_root, ".", ".")) fatal("pivot native root");
+    if (umount2(".", MNT_DETACH) || chdir("/")) fatal("detach old mount root");
+    log_line("native mount root installed; old-root tree detached before namespace switches");
+}
+
+static void mount_native_selinux(void)
+{
+    // A new sysfs mount exposes the mountpoint directory, not selinuxfs.
+    // The native policy loader needs the real API before library constructors
+    // discover it. Do not change enforcement here or load policy over ADB.
+    root_directory("/sys/fs/selinux", 0755);
+    root_mount("selinuxfs", "/sys/fs/selinux", "selinuxfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL);
+    char path[512], value[32], enforce[8], extra;
+    struct statfs fs;
+    rootpath(path, sizeof(path), "/sys/fs/selinux");
+    if (statfs(path, &fs) || (unsigned long)fs.f_type != 0xf97cff8cUL) {
+        errno = ENODEV; fatal("native selinuxfs identity");
+    }
+    rootpath(path, sizeof(path), "/sys/fs/selinux/policyvers");
+    unsigned version;
+    if (read_text(path, value, sizeof(value)) || sscanf(value, "%u%c", &version, &extra) != 1 || version < 31) {
+        errno = EINVAL; fatal("native SELinux policy-version API");
+    }
+    rootpath(path, sizeof(path), "/sys/fs/selinux/enforce");
+    if (read_text(path, enforce, sizeof(enforce)) || (strcmp(enforce, "0") && strcmp(enforce, "1"))) {
+        errno = EINVAL; fatal("native SELinux enforcement API");
+    }
+    log_line("native SELinux API mounted; kernel policy version=%u; enforcement=%s (unchanged)", version, enforce);
+}
+
 static void open_metadata_log(void)
 {
     // A bounded diagnostic in the already mounted host metadata filesystem.
@@ -215,7 +250,7 @@ static long long monotonic_ms(void)
 
 static void record_init_state(int output, size_t *used, size_t limit)
 {
-    const char *files[] = {"comm", "status", "wchan", "stack", "syscall", "cmdline"};
+    const char *files[] = {"comm", "status", "wchan", "stack", "syscall", "cmdline", "mountinfo", "attr/current"};
     char path[128], buffer[4096], title[256];
     for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); ++i) {
         snprintf(path, sizeof(path), "/proc/1/%s", files[i]);
@@ -244,7 +279,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 5; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 6; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -320,7 +355,7 @@ static int start_native_recorder(void)
     if (!child) {
         // All sources are >= 3. After duplication only a read-only kernel
         // stream, one write-only regular log, and a read-only status pipe
-        // survive. This process has already entered the guest chroot/filter.
+        // survive. This process has already entered the guest mount root/filter.
         if (dup2(input, 0) < 0 || dup2(native_log, 1) < 0 || dup2(status_pipe[0], 2) < 0 ||
             syscall(__NR_close_range, 3U, ~0U, 0)) _exit(120);
         prctl(PR_SET_NAME, "hmos-native-log", 0, 0, 0);
@@ -870,8 +905,9 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 5; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 6; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
+    if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
     directory(root, 0755);
     if (mount("tmpfs", root, "tmpfs", MS_NOSUID, "mode=0755")) fatal("new root");
@@ -925,6 +961,7 @@ int main(int argc, char **argv)
     if (mknod(target, S_IFBLK | 0600, data)) fatal("DSU data node");
     root_mount("proc", "/proc", "proc", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL);
     root_mount("sysfs", "/sys", "sysfs", MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL);
+    mount_native_selinux();
     char data_target[512];
     rootpath(data_target, sizeof(data_target), "/data");
     int data_fd = open(target, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
@@ -988,13 +1025,12 @@ int main(int argc, char **argv)
     if (prctl(PR_CAPBSET_DROP, CAP_SYS_BOOT, 0, 0, 0) ||
         prctl(PR_CAPBSET_DROP, CAP_SYS_RAWIO, 0, 0, 0) ||
         prctl(PR_CAPBSET_DROP, CAP_SYS_MODULE, 0, 0, 0)) fatal("capability bounding set");
-    root_directory("/sys/fs/selinux", 0755);
     // Expose only delegated cgroup children. The device-filter ancestor is
     // outside this cgroup namespace and outside the guest's mount tree.
     root_directory("/dev/cgroup", 0755);
     root_mount("cgroup2", "/dev/cgroup", "cgroup2", MS_NOSUID | MS_NODEV | MS_NOEXEC, NULL);
     log_line("executing full donor init --second-stage; framework/SceneBoard target");
-    if (chdir(root) || chroot(".") || chdir("/")) fatal("chroot");
+    pivot_native_root();
     int handoff_status = start_native_recorder();
     // Only the close-on-exec error pipe may survive until execve. The native
     // graph inherits neither metadata logs nor old-root/block descriptors.

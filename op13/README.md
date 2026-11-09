@@ -5,13 +5,14 @@ mechanism. It targets the full supplied HMOS5 framework, SceneBoard and
 SuperLauncher. It is an experimental offline candidate: **no OP13 boot has
 been verified**. The kernel is unchanged.
 
-Revision 4 passed the partition/data mounts, required DRM/GPU/DMA-heap device
-checks and device-filter attachment, then logged the native init handoff.
-Its later native errors did not survive reboot. Revision 5 adds bounded
-persistent recording of kernel messages, exec status and PID 1 state;
-see [NATIVE-STARTUP.md](NATIVE-STARTUP.md). The hardware registration change
-is described in [DISPLAY-STARTUP.md](DISPLAY-STARTUP.md). Userdata handling
-remains as described in [DSU-DATA-INITIALIZATION.md](DSU-DATA-INITIALIZATION.md).
+Revision 5 executed native init and started services. Its complete native log
+exposed a missing selinuxfs API and loss of guest data/device mounts during
+native namespace switches. Revision 6 mounts and checks selinuxfs before init,
+then installs the actual guest mount root with `pivot_root` in a private namespace.
+The local namespace regression reproduces the chroot defect and verifies repeated
+namespace switches retain writable fixture data and the device tree.
+See [NATIVE-STARTUP.md](NATIVE-STARTUP.md). Userdata handling remains as described
+in [DSU-DATA-INITIALIZATION.md](DSU-DATA-INITIALIZATION.md).
 A successful native boot has not been observed. Fork adaptations are documented in
 [FORK-REVIEW.md](FORK-REVIEW.md).
 
@@ -268,9 +269,10 @@ python3 op13/verify_multipart.py \
   --output /home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-multipart-new
 ```
 
-Seventeen component checks cover compilation, sanitizer-backed recorder/device-filter/
+Nineteen component checks cover compilation, sanitizer-backed recorder/device-filter/
 data-header tests, successful/failed exec-status delivery and output bounds,
-rejected non-PID1 invocation, loading actual donor init with native library paths,
+rejected non-PID1 invocation, chroot failure reproduction and pivot-root namespace
+round trips, loading actual donor init with native library paths,
 actual ARM64 storage mounts in an
 isolated namespace, display ABI/mode behavior, actual input-backend
 initialization without HDF, binary policy deltas, and the
@@ -282,7 +284,10 @@ The packer checks each output's EROFS consistency and AVB hashtree and tests ZIP
 CRCs. Packed validation checks executable modes/labels, Android mountpoint
 scaffolding, OP13 vendor file contents/symlinks/metadata/capabilities, original
 filesystem block retention elsewhere, archive membership and all 14 current
-input hashes. Full source-policy neverallow compilation is not claimed.
+input hashes. By default it extracts and hashes the original system first, removes
+that temporary tree, checks the candidate system, then removes it before vendor
+readback. This preserves the file checks while reducing peak disk use;
+`--keep-extracted` explicitly retains the full trees. Full source-policy neverallow compilation is not claimed.
 The mapper/header test also checks exact DM discovery, ambiguous mappings,
 single-slave layers and rejection of mixed backing devices using temporary
 filesystem fixtures. First-stage mounts were verified by the second phone log;

@@ -86,16 +86,28 @@ def main():
         print('PASS original filesystem payload retained:', name, flush=True)
     sys_owners, sys_labels = read_metadata(root, out, 'system')
     vendor_owners, vendor_labels = read_metadata(root, out, 'vendor')
-    system_trees = []
-    for name, image in [('original-system-tree', root / 'hmos5/system.img'),
-                        ('verified-system-tree', out / 'system.img')]:
-        target = out / name
+    before, after = out / 'original-system-tree', out / 'verified-system-tree'
+    system_trees = [before, after]
+    for target in system_trees:
         if target.exists():
             remove_readback(target, out)
-        subprocess.run(['fsck.erofs', '--extract=' + str(target), '--no-preserve-owner', '--preserve-perms',
-                        str(image)], check=True, stdout=subprocess.DEVNULL)
-        system_trees.append(target)
-    before, after = system_trees
+    subprocess.run(['fsck.erofs', '--extract=' + str(before), '--no-preserve-owner', '--preserve-perms',
+                    str(root / 'hmos5/system.img')], check=True, stdout=subprocess.DEVNULL)
+    # Retain hashes/link targets rather than two full system extractions.
+    # The same original files are checked; default peak disk use drops by
+    # about 4.4 GiB. --keep-extracted intentionally keeps the full trees.
+    original_system = {}
+    for path in before.rglob('*'):
+        name = str(path.relative_to(before))
+        if path.is_symlink():
+            original_system[name] = {'symlink': str(path.readlink())}
+        elif path.is_file():
+            original_system[name] = {'sha256': digest(path)}
+    original_init_sha256 = original_system['system/bin/init']['sha256']
+    if not args.keep_extracted:
+        remove_readback(before, out)
+    subprocess.run(['fsck.erofs', '--extract=' + str(after), '--no-preserve-owner', '--preserve-perms',
+                    str(out / 'system.img')], check=True, stdout=subprocess.DEVNULL)
     modified = {str(path.relative_to(out / 'system-patch'))
                 for path in (out / 'system-patch').rglob('*') if path.is_file() or path.is_symlink()}
     patched_files_checked = 0
@@ -108,21 +120,26 @@ def main():
             assert candidate.is_file() and not candidate.is_symlink() and digest(path) == digest(candidate), str(path)
             patched_files_checked += 1
     system_files_checked = 0
-    for path in before.rglob('*'):
-        name = str(path.relative_to(before))
+    for name, entry in original_system.items():
         if name in modified:
             continue
         candidate = after / name
-        if path.is_symlink():
-            assert candidate.is_symlink() and path.readlink() == candidate.readlink(), name
+        if 'symlink' in entry:
+            assert candidate.is_symlink() and entry['symlink'] == str(candidate.readlink()), name
             system_files_checked += 1
-        elif path.is_file():
-            assert candidate.is_file() and not candidate.is_symlink() and digest(path) == digest(candidate), name
+        else:
+            assert candidate.is_file() and not candidate.is_symlink() and entry['sha256'] == digest(candidate), name
             system_files_checked += 1
-    assert digest(before / 'system/bin/init') == digest(after / 'system/bin/hmos-native-init')
+    assert original_init_sha256 == digest(after / 'system/bin/hmos-native-init')
     authorization = after / 'hmos/allow-fresh-userdata'
     assert not authorization.exists()
+    assert (after / 'system/lib/modules').is_symlink()
+    assert str((after / 'system/lib/modules').readlink()) == '/system_dlkm/lib/modules'
+    lines = (after / 'hmos/modules/load-order').read_text().splitlines()
+    assert lines == [row['name'] + ' ' + row['runtime_path'] for row in report['module_load_plan']]
     print('PASS original system files/symlinks outside explicit patch paths:', system_files_checked, flush=True)
+    if not args.keep_extracted:
+        remove_readback(after, out)
     base = json.loads((out / 'vendor-base-content.json').read_text())
     unpacked = out / 'verified-vendor-tree'
     if unpacked.exists():
@@ -150,10 +167,6 @@ def main():
                  'vendor_dlkm', 'system_dlkm'):
         subprocess.run(['dump.erofs', '--path=/' + name, str(out / 'system.img')],
             check=True, stdout=subprocess.DEVNULL)
-    assert (after / 'system/lib/modules').is_symlink()
-    assert str((after / 'system/lib/modules').readlink()) == '/system_dlkm/lib/modules'
-    lines = (after / 'hmos/modules/load-order').read_text().splitlines()
-    assert lines == [row['name'] + ' ' + row['runtime_path'] for row in report['module_load_plan']]
     original_owners = {}
     for line in (root / 'out/vendor-layout/stock/config/vendor_fs_config').read_text().splitlines():
         row = line.split()
@@ -195,11 +208,13 @@ def main():
         'patched_system_file_contents_or_symlinks_checked': patched_files_checked,
         'dlkm_input_images_unchanged': len(report['dlkm_inputs']),
         'zip_exactly_eight_partition_images': True, 'odm_image_omitted': True,
+        'readback_trees_sequential': not args.keep_extracted,
         'scope': 'Offline block retention, file metadata, hashes and archive membership; no device boot or ARB acceptance test'}
     (out / 'packed-validation.json').write_text(json.dumps(result, indent=2) + '\n')
     if not args.keep_extracted:
         for target in [*system_trees, unpacked]:
-            remove_readback(target, out)
+            if target.exists():
+                remove_readback(target, out)
     print('PASS packed metadata, OP13 base preservation, ZIP membership and all original input hashes')
 
 
