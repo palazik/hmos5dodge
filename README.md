@@ -48,6 +48,7 @@ The OP13 implementation is in [`op13/`](op13/). Its main tools are:
 
 - [`prepare_vendor.py`](op13/prepare_vendor.py): select native HMOS runtime additions.
 - [`prepare_dlkm.py`](op13/prepare_dlkm.py): inspect matching stock module images.
+- [`prune_outputs.py`](op13/prune_outputs.py): keep one validated output set and remove superseded generated images.
 - [`extend_with_dlkm.py`](op13/extend_with_dlkm.py): update an existing candidate with DLKM and omit ODM.
 - [`build_multipart.py`](op13/build_multipart.py): build separate partition images and a DSU ZIP.
 - [`verify_multipart.py`](op13/verify_multipart.py): check packed contents and input preservation.

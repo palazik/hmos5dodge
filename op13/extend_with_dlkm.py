@@ -42,6 +42,10 @@ def main():
         if digest(root / source) != expected:
             raise RuntimeError('component changed after validation: ' + source)
     dlkm = load_report(root, args.dlkm_audit)
+    if 'vendor_base_sha256' in dlkm:
+        base_vendor = report.get('input_images', {}).get('op13_stock/vendor.img', {}).get('sha256')
+        if base_vendor != dlkm['vendor_base_sha256']:
+            raise RuntimeError('stock vendor firmware changed; use build_multipart.py to rebuild vendor too')
     output.mkdir(parents=True)
     stage = output / 'system-patch'
     shutil.copytree(base / 'system-patch', stage, symlinks=True)

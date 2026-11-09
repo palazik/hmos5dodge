@@ -126,6 +126,8 @@ def main():
     from prepare_dlkm import load_report, write_load_plan
     workspace, output = args.workspace.resolve(), args.output.resolve()
     dlkm = load_report(workspace, args.dlkm_audit)
+    if 'vendor_base_sha256' in dlkm and digest(workspace / 'op13_stock/vendor.img') != dlkm['vendor_base_sha256']:
+        raise RuntimeError('vendor base is not from the audited module firmware')
     startup_dir = args.startup_dir or workspace / 'out/op13-startup'
     startup = json.loads((startup_dir / 'manifest.json').read_text())
     if not startup['full_framework_preserved']:
@@ -249,6 +251,9 @@ def main():
         'vendor_base': 'op13_stock/vendor.img', 'whole_donor_vendor_used': False,
         'odm_source': 'Reuse the existing mounted stock ODM EROFS read-only; no ODM partition in the ZIP',
         'dlkm_inputs': dlkm['images'], 'module_load_plan': dlkm['load_plan'],
+        'module_audit': {key: dlkm[key] for key in ('scope', 'vendor_boot', 'payload_properties',
+                         'crc_checks', 'load_plan_sources', 'vendor_base_sha256') if key in dlkm},
+        'input_images': audit['images'],
         'startup_configuration': startup,
         'partitions': records, 'zip': package,
         'component_validation': validation, 'vendor_additions': vendor,

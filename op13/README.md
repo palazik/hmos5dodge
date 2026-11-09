@@ -6,8 +6,9 @@ SuperLauncher. It is an experimental offline candidate: **no OP13 boot has
 been verified**. The kernel is unchanged.
 
 The local package is:
-`/home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-passthrough/hmos5-op13-dsu.zip`.
-The earlier candidates, including `hmos5-op13-dsu-with-dlkm`, have been superseded.
+`/home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-current/hmos5-op13-dsu.zip`.
+Earlier candidates have been superseded. Generated images and archives are
+retained in this directory only; older directories retain small build records.
 
 ## Partition layout
 
@@ -17,8 +18,8 @@ The ZIP contains eight separate raw filesystem images (EROFS and ext4), with no 
 | --- | --- |
 | `system.img` | Supplied HMOS system; native init handoff, isolated DSU storage, curated startup, storage shim and OP13 display/policy payloads. |
 | `vendor.img` | **OP13 stock vendor**, fully unpacked/rebuilt with explicitly selected native HMOS runtime additions. |
-| `vendor_dlkm.img` | Supplied current OP13 vendor modules in their unchanged ext4 filesystem. |
-| `system_dlkm.img` | Supplied current OP13 GKI modules in their unchanged EROFS filesystem. |
+| `vendor_dlkm.img` | Vendor modules from the restored OP13 payload, in their unchanged ext4 filesystem. |
+| `system_dlkm.img` | GKI modules from that same OP13 payload, in their unchanged EROFS filesystem. |
 | `sys_prod.img` | Supplied HMOS sys_prod filesystem, unchanged; initial UI overrides are bind-mounted during handoff. |
 | `chip_prod.img` | Supplied HMOS chip_prod filesystem, unchanged; curated HDF configuration is bind-mounted during handoff. |
 | `cust.img` | Supplied HMOS cust filesystem, unchanged. |
@@ -33,6 +34,13 @@ partition name. Consequently, an unchanged filesystem does not mean its whole
 output image is byte-identical to the input. Local signature/hashtree checks
 do not prove the device trusts the key. Original input image bytes are not
 modified.
+
+The stock source was refreshed on 2026-11-09 from the owner's updated
+`claudefix/stock/payload.bin`, identified by its metadata as
+`PJZ110_11.C.93_1930_202608031342`. The extracted vendor, vendor_boot,
+vendor_dlkm and system_dlkm hashes match the payload manifest. These four
+original stock inputs now live together in `op13_stock/`; obsolete vendor
+and vendor_boot files there were replaced by the authorized refresh.
 
 No `boot`, `init_boot`, `vendor_boot`, `dtbo`, physical `vbmeta`, bootloader or
 firmware-partition image is included or flashed. No phone has been contacted,
@@ -94,15 +102,22 @@ that denies all block-device access. Kernel attachment/namespace behavior
 still needs a phone test; failures stop the handoff. No automatic reboot timer
 is added.
 
-The current `vendor_dlkm` contains 464 modules, all byte-identical to the supplied
-October device capture. The supplied `system_dlkm` contains 96 GKI modules.
-The dependency-ordered 120-module graphics plan now reads 59 files directly from
-`vendor_dlkm`; 61 early modules remain available as copies from the supplied
-`vendor_boot` ramdisk. Already loaded modules are skipped. The standard
+The current `vendor_dlkm` contains 458 modules, and `system_dlkm` contains
+96 GKI modules, from the newly restored firmware. The October capture is
+historical evidence and is not a source of modules for this candidate.
+The dependency-ordered 119-module graphics plan reads 58 files directly from
+`vendor_dlkm`; 61 early modules are copied from the new `vendor_boot` ramdisk.
+All 712 checked imports provided by modules in this plan have matching CRCs.
+Already loaded modules are skipped. The standard
 `/system/lib/modules` link points at `/system_dlkm/lib/modules`. Normal kernel
 ABI and signature checks remain enabled, with no force flags. Module-to-module
-CRC checks and captured-file identity do not verify every live kernel export
+CRC checks and common payload provenance do not verify every live kernel export
 or prove that the running kernel accepts each module.
+
+Both DLKM images must correspond to the running OP13 kernel. In particular,
+GKI modules in `system_dlkm` are built and signed together with their GKI;
+they cannot be replaced with donor HMOS modules merely because userspace is
+HMOS. See [AOSP GKI module partitions](https://source.android.com/docs/core/architecture/partitions/gki-partitions).
 
 The startup overlay retains the main native framework with its original
 users/domains, excludes donor physical-storage mounting and flashing/update
@@ -118,12 +133,13 @@ HarmonyOS distributed storage.
 
 ## Stock kernel and ARB
 
-The owner's root probe confirmed Binder protocol 8 and DRM card0 dumb-buffer
+The owner's earlier root probe confirmed Binder protocol 8 and DRM card0 dumb-buffer
 capability. The queried OHOS feature ioctl returned EINVAL, and the access-token
 node was absent. The actual HMOS5 IPC binary has a standard-Binder fallback;
 native init treats its initial SetSelfTokenID failure as a warning. These
 findings support a stock-kernel first test, not a claim all native permission
-semantics work. No broad OpenHarmony kernel patch set is applied.
+semantics work. Those observations have not been repeated on the restored
+firmware. No broad OpenHarmony kernel patch set is applied.
 
 OP13 ARB is a constraint. This package contains no boot-chain/firmware downgrade
 or physical vbmeta change. The supplied image footers report rollback index
@@ -131,8 +147,9 @@ or physical vbmeta change. The supplied image footers report rollback index
 of OEM anti-rollback enforcement. Development signing and changing DSU
 compatibility metadata do not bypass hardware rollback protection.
 
-Android compatibility metadata uses the supplied capture: release 17, SDK 37,
-patch 2026-10-05. These fields do not assert Android security fixes in HMOS.
+Android compatibility metadata now uses the updated payload's actual system
+properties: release 16, SDK 36, patch 2026-08-01. The earlier Android 17/SDK 37
+capture values are no longer used. These fields do not assert Android security fixes in HMOS.
 Device acceptance and the currently running kernel/module compatibility remain
 unverified. Diagnose an acceptance failure from loader logs before considering
 any change to the device's boot configuration.
@@ -195,15 +212,17 @@ python3 op13/prepare_vendor.py \
   --startup-dir /home/palaziks/hmosnext5_op13/out/op13-startup-new
 python3 op13/prepare_dlkm.py \
   --workspace /home/palaziks/hmosnext5_op13 \
-  --source-dir /home/palaziks/hmosnext5_op13/newfiles \
-  --output /home/palaziks/hmosnext5_op13/out/current-dlkm-audit-new
+  --source-dir /home/palaziks/hmosnext5_op13/op13_stock \
+  --vendor-boot /home/palaziks/hmosnext5_op13/op13_stock/vendor_boot.img \
+  --payload-inventory /home/palaziks/hmosnext5_op13/work/cos16.0.10/manifest-inventory.json \
+  --output /home/palaziks/hmosnext5_op13/out/module-audit-new
 python3 op13/build_multipart.py \
   --workspace /home/palaziks/hmosnext5_op13 \
   --output /home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-multipart-new \
   --vendor-additions /home/palaziks/hmosnext5_op13/out/op13-vendor-additions-new \
-  --dlkm-audit /home/palaziks/hmosnext5_op13/out/current-dlkm-audit-new/report.json \
+  --dlkm-audit /home/palaziks/hmosnext5_op13/out/module-audit-new/report.json \
   --startup-dir /home/palaziks/hmosnext5_op13/out/op13-startup-new \
-  --android-release 17 --android-sdk 37 --host-security-patch 2026-10-05
+  --android-release 16 --android-sdk 36 --host-security-patch 2026-08-01
 python3 op13/verify_multipart.py \
   --workspace /home/palaziks/hmosnext5_op13 \
   --output /home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-multipart-new
@@ -219,14 +238,14 @@ boot, real userdata formatting, BPF attachment or display hardware.
 The packer checks each output's EROFS consistency and AVB hashtree and tests ZIP
 CRCs. Packed validation checks executable modes/labels, Android mountpoint
 scaffolding, OP13 vendor file contents/symlinks/metadata/capabilities, original
-filesystem block retention elsewhere, archive membership and all 12 original
+filesystem block retention elsewhere, archive membership and all 14 current
 input hashes. Full source-policy neverallow compilation is not claimed.
 
 `manifest.json`, `packed-validation.json`, `SHA256SUMS`, and the component logs
 record the actual scope. `development-key.pem` is a private local key, not an
-OEM key. The July stock payload was inspected as a candidate DLKM source, but its vendor
-module import CRCs differ from the October capture. The current DLKM images in
-`newfiles/` are used instead. Neither `preload` nor `anco_hmos` exists in the
+OEM key. Module providers now come entirely from the updated payload. The older
+`newfiles/`, July-payload extractions and October capture are not used for this
+candidate's modules. Neither `preload` nor `anco_hmos` exists in the
 supplied HMOS5 image set; no substitute image is invented for those HMOS7 names.
 
 Module inventory and init-mask helpers are included as `inspect_modules.py`,
@@ -246,3 +265,16 @@ It preserves the unchanged vendor/auxiliary/DLKM images and replaces only the
 system image. `check_input_backend.sh` tests the real donor ARM64 input backend
 in an isolated empty-device namespace. The missing legacy HDF-host entry is
 removed rather than replaced with a fake driver or a successful-IOCTL stub.
+
+When the stock firmware changes, use the full builder to rebuild vendor too.
+The extender rejects an updated payload audit if its stock vendor differs
+from the base candidate. `prepare_dlkm.py` checks the four stock partition
+hashes against the verified payload inventory, rebuilds the dependency graph,
+and checks module-to-module CRCs; it does not reuse the old capture's graph.
+
+After a replacement candidate passes packed validation, run
+`python3 op13/prune_outputs.py --workspace WORKSPACE --current CURRENT_DIRECTORY`.
+It verifies the current image/archive hashes, removes generated images and
+archives from older candidate directories, and discards full vendor build
+trees. It retains the current eight raw images, one ZIP, source inputs and
+small historical manifests. `cleanup.json` records the removed paths.
