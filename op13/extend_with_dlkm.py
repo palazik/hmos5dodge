@@ -14,6 +14,7 @@ from selinux_config import write_config
 from ipc.package_module import attach as attach_ipc, patch as patch_ipc
 from param_config import write_config as write_param_config
 from hdf_hosts import validate as validate_hdf_hosts
+from graphics_runtime import stage_validated as stage_graphics
 
 
 def main():
@@ -49,6 +50,10 @@ def main():
     for source, expected in components['artifact_sha256'].items():
         if digest(root / source) != expected:
             raise RuntimeError('component changed after validation: ' + source)
+    for source, expected in components['artifact_symlinks'].items():
+        path = root / source
+        if not path.is_symlink() or str(path.readlink()) != expected:
+            raise RuntimeError('component symlink changed after validation: ' + source)
     dlkm = load_report(root, args.dlkm_audit)
     attach_ipc(root, dlkm, args.ipc_module, args.ipc_vm_report)
     if 'vendor_base_sha256' in dlkm:
@@ -74,6 +79,7 @@ def main():
     for library in ('libdisplay_buffer_vdi_impl.z.so', 'libdisplay_composer_vdi_impl.z.so'):
         shutil.copyfile(root / 'out/op13-display' / library, stage / 'hmos/display' / library)
     validate_hdf_hosts(stage / 'hmos/startup', startup or report['startup_configuration'])
+    stage_graphics(root, stage)
     write_load_plan(root, stage, dlkm)
     (stage / 'system/lib').mkdir(exist_ok=True)
     link = stage / 'system/lib/modules'
@@ -153,7 +159,8 @@ def main():
     updated.update({'partitions': records, 'zip': package, 'component_validation': components, 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 10, 'selinux_mode_changed': False,
+        'handoff_revision': 11, 'selinux_mode_changed': False,
+        'native_graphics_runtime': components['native_graphics_runtime'],
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,
         'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',

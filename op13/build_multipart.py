@@ -13,6 +13,7 @@ from image_utils import check_filesystem
 from selinux_config import write_config
 from param_config import write_config as write_param_config
 from hdf_hosts import validate as validate_hdf_hosts
+from graphics_runtime import stage_validated as stage_graphics
 
 
 def digest(path):
@@ -150,6 +151,10 @@ def main():
     for name, expected in validation['artifact_sha256'].items():
         if digest(workspace / name) != expected:
             raise RuntimeError('component changed after validation: ' + name)
+    for name, expected in validation['artifact_symlinks'].items():
+        path = workspace / name
+        if not path.is_symlink() or str(path.readlink()) != expected:
+            raise RuntimeError('component symlink changed after validation: ' + name)
     audit = json.loads((workspace / 'out/stock-dsu-audit/report.json').read_text())
     for name, record in audit['images'].items():
         print('Verifying original', name, flush=True)
@@ -174,6 +179,7 @@ def main():
     shutil.copyfile(workspace / 'out/stock-dsu-audit/donor-init', stage / 'system/bin/hmos-native-init')
     shutil.copytree(startup_dir, stage / 'hmos/startup', symlinks=True)
     validate_hdf_hosts(stage / 'hmos/startup', json.loads((startup_dir / 'manifest.json').read_text()))
+    stage_graphics(workspace, stage)
     shutil.copyfile(startup_dir / 'mask-init-dirs', stage / 'hmos/mask-init-dirs')
     shutil.copytree(workspace / 'out/op13-ui', stage / 'hmos/ui')
     for name in ('libdisplay_buffer_vdi_impl.z.so', 'libdisplay_composer_vdi_impl.z.so'):
@@ -264,7 +270,8 @@ def main():
     report = {'status': 'experimental-op13-only-multipart-dsu', 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 10, 'selinux_mode_changed': False,
+        'handoff_revision': 11, 'selinux_mode_changed': False,
+        'native_graphics_runtime': validation['native_graphics_runtime'],
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,
         'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',

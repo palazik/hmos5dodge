@@ -16,6 +16,7 @@ from image_utils import filesystem_info
 from selinux_config import permissive_config
 from ipc.package_module import verify as verify_ipc
 from param_config import hdf_dac
+from graphics_runtime import verify as verify_graphics_runtime, BRIDGES as GRAPHICS_BRIDGES, DRM_TARGET
 
 
 def remove_readback(target, output):
@@ -152,6 +153,13 @@ def main():
         assert sys_labels['system/etc/param/hdf_devmgr.para.dac'] == 'u:object_r:system_etc_file:s0'
     if report.get('handoff_revision', 0) >= 10:
         validate_hdf_hosts(after / 'hmos/startup', report['startup_configuration'])
+    if report.get('handoff_revision', 0) >= 11:
+        verify_graphics_runtime(root, after)
+        assert digest(after / DRM_TARGET.lstrip('/')) == digest(root / 'work/inspect/system' / DRM_TARGET.lstrip('/'))
+        for name in GRAPHICS_BRIDGES:
+            path = 'hmos/display/' + name
+            assert sys_owners[path][:3] == ['0', '0', '0644']
+            assert sys_labels[path] == 'u:object_r:vendor_lib_file:s0'
     assert (after / 'system/lib/modules').is_symlink()
     assert str((after / 'system/lib/modules').readlink()) == '/system_dlkm/lib/modules'
     lines = (after / 'hmos/modules/load-order').read_text().splitlines()

@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 from selinux_config import permissive_config
 from hdf_hosts import validate as validate_hdf_hosts
+from graphics_runtime import FILES as GRAPHICS_FILES, SYMLINK as GRAPHICS_SYMLINK
 
 REPO = Path(__file__).resolve().parents[1]
 WORKSPACE = REPO.parent
@@ -133,6 +134,11 @@ def main():
         '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp', qemu,
         '-L', SYSROOT, '-E', 'LD_LIBRARY_PATH=' + str(SYSROOT / 'usr/lib'),
         display / 'hdf-graph-test', startup / 'hdf_default.hcb', *[s['name'] for s in hosts]]))
+    tests.append(run('graphics-loader-test-build', ['bash', 'build/ohos-clang', '-std=c11', '-O2',
+        '-Wall', '-Wextra', '-Werror', 'op13/graphics_loader_test.c', '-ldl', '-lc',
+        '-o', display / 'graphics-loader-test'], env=environment))
+    tests.append(run('arm64-native-graphics-namespaces-and-hdi-factories',
+        ['python3', 'op13/check_graphics_runtime.py']))
     tests.append(run('arm64-input-backend-without-hdf', ['bash', 'op13/check_input_backend.sh']))
     for prefix in ('', 'developer-'):
         policy = WORKSPACE / 'out/op13-policy'
@@ -163,8 +169,14 @@ def main():
         display / 'libdisplay_buffer_vdi_impl.z.so', display / 'libdisplay_composer_vdi_impl.z.so',
         WORKSPACE / 'out/op13-policy/policy.31', WORKSPACE / 'out/op13-policy/developer_policy']
     artifacts.extend(p for p in startup.rglob('*') if p.is_file() and not p.is_symlink())
+    graphics = WORKSPACE / 'out/op13-graphics-runtime'
+    artifacts.extend(graphics / name for name in GRAPHICS_FILES)
+    artifacts.append(WORKSPACE / 'work/inspect/system/system/lib64/chipset-sdk/libdrm.so')
     record = {'passed': True, 'tests': tests,
               'artifact_sha256': {str(p.relative_to(WORKSPACE)): hashlib.sha256(p.read_bytes()).hexdigest() for p in artifacts},
+              'artifact_symlinks': {str((graphics / GRAPHICS_SYMLINK).relative_to(WORKSPACE)):
+                                    str((graphics / GRAPHICS_SYMLINK).readlink())},
+              'native_graphics_runtime': json.loads((graphics / 'validation.json').read_text()),
               'scope': 'Offline userspace/logic/format tests. No OP13 kernel boot, BPF attachment, native framework boot or hardware rendering tested.'}
     (OUTPUT / 'validation.json').write_text(json.dumps(record, indent=2) + '\n')
     print('All offline component checks passed; hardware/DSU boot remains untested.')

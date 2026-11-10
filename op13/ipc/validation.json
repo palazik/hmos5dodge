@@ -1,5 +1,5 @@
 {
-  "status": "stock-kernel IPC confirmed on OP13 through revision 9; full framework still stalls",
+  "status": "stock-kernel IPC confirmed on OP13 through revision 10; full framework still stalls",
   "provided_source_version": "6.6.144",
   "kernel_image_built": false,
   "loadable_module_built": true,
@@ -19,7 +19,7 @@
     "stock_kernel_sha256": "0b4b3aadd775009d88f39d0738ee7fa1a8a053444f668c2a762d0ea31f86e6a5",
     "kernel_release": "6.6.118-android15-8-g93e223c276e7-abogki500782043-4k",
     "module_sha256": "8fd408384b0accd695ebe9069be5f39b05cbe2620c68482c8c29b1680d7602e8",
-    "bootstrap_source_sha256": "a0f1633b5e0a8972a931c62a05a2713878e065ca5c1e86ff3ab56dbb58f1384b",
+    "bootstrap_source_sha256": "96b7e97e2e8efac8938d966fdcf813956e4869e5b4223c61564bbc40fa23bdda",
     "module_load_flags": 0,
     "production_ipc_aliases_exercised": true,
     "kernel_image_modified": false,
@@ -62,5 +62,5 @@
     },
     "connected_device_operations": "read-only capture completed; device released"
   },
-  "latest_phone_result": "../revision9-phone-result.json"
+  "latest_phone_result": "../revision10-phone-result.json"
 }

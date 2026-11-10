@@ -9,16 +9,16 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 
 ## Status
 
-**Revision 9 still shows the static OnePlus logo. Revision 10 repairs missing display-host startup definitions.**
+**Revision 10 starts both display hosts but still shows the static OnePlus logo. Revision 11 repairs native graphics implementation loading.**
 
 Native Binder/token checks pass; the previous storage and HDF parameter errors
-are absent. The selected device graph lacked complete init definitions for
-composer/allocator hosts. Revision 10 restores the five selected donor host
-services with matching HCB IDs, removes a malformed duplicate pin-auth entry,
-and fixes a donor gralloc relocation failure with explicit unsupported responses
-for Huawei private metadata. See the [attempt-9 diagnosis](op13/ATTEMPT9.md) and
+are absent. Revision 11 adds the missing native allocator/composer service
+implementations and their dependencies. A native graphics search path selects
+HarmonyOS libdrm instead of the incompatible Android vendor library. The actual
+donor HDI loader constructs both implementations in an isolated ARM64 test.
+See the [attempt-10 diagnosis](op13/ATTEMPT10.md) and
 [test instructions](op13/TESTING.md). A first HarmonyOS frame remains unproven.
-Only system.img changes from revision 9. The stock kernel Image, vendor_boot,
+Only system.img changes from revision 10. The stock kernel Image, vendor_boot,
 working IPC module, all seven other images, native policy binaries and
 [userdata allocation logic](op13/DSU-DATA-INITIALIZATION.md) remain unchanged.
 Full framework boot on the phone remains unresolved.
