@@ -2,18 +2,18 @@
 
 This is an **OP13-specific port**, using DSU as its installation and boot
 mechanism. It targets the full supplied HMOS5 framework, SceneBoard and
-SuperLauncher. Revision 8 is an experimental candidate with a VM-tested native
-IPC module. Full framework boot on OP13 remains unverified.
+SuperLauncher. The owner tested revision 8: the IPC module loads and the
+native API checks pass, but the static OnePlus boot logo remains. Native
+service registrations, render readiness and app-framework readiness now occur;
+these events do not prove a displayed frame or the HarmonyOS boot animation.
 
-Revision 7 reached native init, writable DSU data and successful native policy
-loading, but access-token setup and samgr registration failed. Revision 8 adds
-op13_hmos_ipc.ko to vendor_dlkm and uses its isolated Harmony Binder/token
-endpoints. The unchanged stock kernel accepted the exact module in a diskless
-QEMU VM and passed the real token and nested-Binder contracts, including the
-production bootstrap aliases. The kernel Image and vendor_boot remain stock;
-existing stock module bytes and userdata logic remain unchanged. See
-[IPC details](ipc/README.md), [native startup evidence](NATIVE-STARTUP.md),
-[fork review](FUXI-REVIEW.md) and [test instructions](TESTING.md).
+Revision 9 addresses two observed startup problems: the missing /mnt/data
+parent for storage's virtual directories, and the unloaded donor HDF ready-event
+permission rule. It adds bounded read-only HiLog queries and UI/HDF process
+snapshots to the existing native log. Only system.img changes from revision 8;
+the kernel Image, vendor_boot, working IPC module and userdata allocation logic
+remain unchanged. Read [ATTEMPT8.md](ATTEMPT8.md), [IPC details](ipc/README.md)
+and [test instructions](TESTING.md). Full phone boot remains unverified.
 
 The local package is:
 `/home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-current/hmos5-op13-dsu.zip`.

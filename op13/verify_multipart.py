@@ -14,6 +14,7 @@ from build_multipart import digest
 from image_utils import filesystem_info
 from selinux_config import permissive_config
 from ipc.package_module import verify as verify_ipc
+from param_config import hdf_dac
 
 
 def remove_readback(target, output):
@@ -143,6 +144,11 @@ def main():
     assert not authorization.exists()
     assert (after / 'hmos/policy/config.permissive').read_bytes() == permissive_config(
         (after / 'system/etc/selinux/config').read_bytes())
+    if report.get('handoff_revision', 0) >= 9:
+        assert (after / 'system/etc/param/hdf_devmgr.para.dac').read_bytes() == hdf_dac(
+            (root / 'work/inspect/vendor/etc/param/hdf_devmgr.para.dac').read_bytes())
+        assert sys_owners['system/etc/param/hdf_devmgr.para.dac'][:3] == ['0', '0', '0644']
+        assert sys_labels['system/etc/param/hdf_devmgr.para.dac'] == 'u:object_r:system_etc_file:s0'
     assert (after / 'system/lib/modules').is_symlink()
     assert str((after / 'system/lib/modules').readlink()) == '/system_dlkm/lib/modules'
     lines = (after / 'hmos/modules/load-order').read_text().splitlines()

@@ -11,6 +11,7 @@ import subprocess
 import zipfile
 from image_utils import check_filesystem
 from selinux_config import write_config
+from param_config import write_config as write_param_config
 
 
 def digest(path):
@@ -197,6 +198,7 @@ def main():
     (stage / 'system/build.prop').write_text(props)
     (stage / 'system/etc/prop.default').write_text(props)
     write_config(workspace, stage)
+    write_param_config(workspace, stage)
     owners, labels = metadata(workspace, 'system', 'system')
     # Android SwitchRoot moves its early mounts into the new read-only root.
     # Their mountpoint directories must exist before the system image boots.
@@ -213,6 +215,7 @@ def main():
         ('/hmos/ui(/.*)?', 'sys_prod_file'), ('/hmos/policy(/.*)?', 'vendor_etc_file'),
         ('/hmos/init-modules(/.*)?', 'system_lib_file'), ('/system/bin/(init|hmos-native-init)', 'init_exec'),
         ('/system/bin/hmos-oobedone', 'system_bin_file'), ('/system/lib/modules', 'system_lib_file'),
+        ('/system/etc/param/hdf_devmgr\\.para\\.dac', 'system_etc_file'),
         ('/system/lib64/libop13_local_storage\\.so', 'system_lib_file')])}
     vendor_stage = output / 'vendor-patch'
     shutil.copytree(args.vendor_additions / 'tree', vendor_stage)
@@ -259,7 +262,7 @@ def main():
     report = {'status': 'experimental-op13-only-multipart-dsu', 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 8, 'selinux_mode_changed': False,
+        'handoff_revision': 9, 'selinux_mode_changed': False,
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,
         'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',
@@ -268,7 +271,8 @@ def main():
         'native_selinux_api': 'selinuxfs mounted and API checked before donor init; enforcement unchanged by bootstrap',
         'native_startup_metadata_log': '/metadata/hmos5dodge/native-startup.log',
         'native_startup_recorder': {'maximum_bytes': 4194304, 'duration_seconds': 180,
-                                    'scope': 'Kernel records and PID-1 state; latest handoff only'},
+                                    'scope': 'Kernel records, PID-1/UI process state and bounded read-only HiLog queries; latest handoff only',
+                                    'hilog_query_limit_bytes': 262144, 'hilog_query_timeout_ms': 3000},
         'kernel_modified': False, 'physical_partitions_written': False,
         'vendor_base': 'op13_stock/vendor.img', 'whole_donor_vendor_used': False,
         'odm_source': 'Reuse the existing mounted stock ODM EROFS read-only; no ODM partition in the ZIP',

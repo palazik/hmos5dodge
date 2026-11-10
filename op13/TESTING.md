@@ -1,32 +1,35 @@
-# OP13 handoff revision 8
+# OP13 handoff revision 9
 
-Revision 8 adds the VM-tested op13_hmos_ipc module inside vendor_dlkm.img and
-connects the native Binder/access-token aliases. The unchanged stock 6.6.118
-kernel passed token, nested-callback, concurrent-caller and production-alias
-contracts in QEMU. All 24 component checks and full packed readback passed.
-Full framework boot on OP13 is still untested.
+Revision 8 confirmed that the IPC module loads on OP13 and clears the old token
+setup/service-registration denials. The phone still showed the static OnePlus
+logo; seeing render_service ready did not establish a displayed HarmonyOS frame.
 
-Install this directory's complete **hmos5-op13-dsu.zip** using DSU Sideloader.
-Keep permissive selected for this diagnostic test, as before. The kernel Image
-and vendor_boot stay stock. Choose your desired userdata size in the app; it is
-not fixed to 25 GiB or resized by the port. Userdata handling is unchanged.
+Revision 9 adds the missing guest /mnt/data parent, makes the donor HDF
+ready-event permission file visible to parameter loading, and adds bounded
+HiLog warnings/errors plus UI/HDF process snapshots. Only system.img changes.
+The working IPC module, kernel Image, vendor_boot and userdata logic are retained.
+This revision has offline/VM validation, not a successful phone boot result.
 
-Allow about three minutes at the logo before returning to Android, so the
-recorder can capture startup. Recording expiry does not stop or reboot HarmonyOS.
-After returning to rooted Android, collect both logs:
+Install the complete hmos5-op13-dsu.zip through DSU Sideloader and keep permissive
+selected for this diagnostic test. Choose your normal userdata size in the app;
+it is not fixed to 25 GiB or resized. No boot/vendor_boot/firmware flashing is
+part of this test.
+
+Let it run for about three minutes before returning to Android, then collect:
 
 ```sh
-adb shell "su -c 'cat /metadata/hmos5dodge/bootstrap.log'" > bootstrap-v8.txt
-adb shell "su -c 'cat /metadata/hmos5dodge/native-startup.log'" > native-v8.txt
+adb shell "su -c 'cat /metadata/hmos5dodge/bootstrap.log'" > bootstrap-v9.txt
+adb shell "su -c 'cat /metadata/hmos5dodge/native-startup.log'" > native-v9.txt
 ```
 
-Find `starting OP13 DSU handoff revision 8` in the bootstrap log; older history
-remains above it. Look for `loaded planned module op13_hmos_ipc` and
-`native Harmony Binder and task-token APIs verified`. Native logs then establish
-whether access-token setup and service registration improve. Report the visible
-screen and keep both full logs. A new failure after IPC needs its own diagnosis;
-the VM test does not establish working graphics, hardware or a booted desktop.
+Find the newest revision-9 start in bootstrap.log. native-startup.log contains
+only the latest attempt, with the existing 4 MiB / 180-second bound. New sections
+start with `HiLog warning/error snapshot` and `native UI/HDF process inventory`.
+Each query uses the donor tool's nonblocking tail mode, is limited to 256 KiB
+and three seconds, and reads warnings/errors without clearing buffers or
+changing log settings. The recorder only terminates its own query child.
+Recording expiry does not terminate or reboot HarmonyOS.
 
-No firmware, bootloader, physical vbmeta, boot or vendor_boot partition image
-is included in the package. Source changes and logs do not require the phone
-connected; current read-only capture has completed.
+Keep both complete logs and report whether the screen remains at the static
+OnePlus logo, reaches an animation, or shows HarmonyOS UI. Read-only phone
+capture is finished; the device can be disconnected during offline work.

@@ -1,5 +1,26 @@
 # Native init diagnostics
 
+## Revision-8 phone diagnosis and revision-9 update
+
+The phone still shows its static OnePlus logo, with no observed HarmonyOS boot
+animation. Revision 8 successfully loads the IPC module and passes its native
+API checks on OP13. Previous token/registration denials disappear; native
+services register and report render/app-framework readiness. These events do
+not establish that a frame reached the panel. See [ATTEMPT8.md](ATTEMPT8.md)
+for the complete log review, evidence and remaining peripheral failures.
+
+Revision 9 supplies the missing /mnt/data parent in the guest tmpfs root,
+exposes the existing donor HDF ready-event DAC in the loaded system path and
+queries native HiLog warnings/errors inside the existing recorder bounds.
+It also records core UI/HDF process state. The query child receives only pipe
+stdout/stderr and inherits the collector's capability drops/no_new_privs;
+metadata and kernel-log descriptors are closed before exec. Each query is
+limited to 256 KiB / three seconds, and only that child can be terminated.
+All 24 component checks, actual-donor CLI validation, stock-kernel IPC VM tests
+and full packed readback passed. Only system.img changes from revision 8.
+The next phone test must establish storage startup, the HDF event and any
+graphics/HDF errors. The read-only device capture is finished.
+
 ## Revision 8: real stock-kernel IPC module
 
 The read-only phone capture supplied its 6,122,742-byte BTF data and core symbol

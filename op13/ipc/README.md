@@ -10,8 +10,11 @@ QEMU. Tests cover task/fork/thread inheritance, permission changes, rejected
 unprivileged token spoofing, demand-paged ioctl buffers, sender/first-caller
 identity, 64 nested calls and concurrent caller isolation. The stripped module
 also passed with the production bootstrap's four device aliases and API checks.
-These results establish IPC behavior on that kernel in a VM; the revision-8
-phone boot and complete HarmonyOS framework remain untested.
+The revision-8 phone test also loads this module and passes the real ioctl
+checks. The old token-setup and registration-denial messages disappear, and
+native service registration proceeds. The phone remains at the static OnePlus
+logo; complete HarmonyOS startup is unresolved. Revision 9 retains the same
+module and adds targeted startup corrections/diagnostics; see ../ATTEMPT8.md.
 
 ## Sources and kernel interfaces
 

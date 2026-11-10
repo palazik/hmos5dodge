@@ -141,6 +141,54 @@ static void recorder_fixture(bool exec_failed, size_t limit)
     close(output);
 }
 
+static void hilog_fixture(const char *mode, const char *binary, bool success)
+{
+    char path[] = "/tmp/hmos-hilog-XXXXXX";
+    int output = mkstemp(path);
+    assert(output >= 0 && !unlink(path));
+    // Deliberately keep a non-CLOEXEC regular descriptor open: it must not
+    // reach the executed query. The fixture also checks stdin is closed.
+    assert(!setenv("HMOS_HILOG_TEST_MODE", mode, 1));
+    struct hilog_snapshot snapshot = {.input = -1};
+    assert(!start_hilog_snapshot(&snapshot, binary, 100));
+    size_t used = 0;
+    long long start = monotonic_ms();
+    while (snapshot.child && monotonic_ms() - start < 3000) {
+        pump_hilog_snapshot(&snapshot, output, &used, 400000);
+        struct timespec delay = {.tv_nsec = 1000000};
+        nanosleep(&delay, NULL);
+    }
+    assert(!snapshot.child && snapshot.input == -1 && used < 263000);
+    assert(!unsetenv("HMOS_HILOG_TEST_MODE"));
+    char text[4096] = {0};
+    ssize_t count = pread(output, text, sizeof(text) - 1, 0);
+    assert(count >= 0);
+    if (success) assert(strstr(text, "HiLog fixture: clean descriptors"));
+    if (!strcmp(mode, "missing")) assert(strstr(text, "HiLog query exec failed: errno=2"));
+    printf("PASS HiLog query fixture %s: bounded output, child reaped, no descriptor inheritance\n", mode);
+    close(output);
+}
+
+static void storage_mountpoint_fixture(void)
+{
+    char directory[] = "/tmp/hmos-storage-parent-XXXXXX", path[512];
+    assert(mkdtemp(directory));
+    fixture_directory(directory, "mnt");
+    fixture_path(path, directory, "mnt/data/external");
+    assert(mkdir(path, 0755) == -1 && errno == ENOENT);
+    const char *previous_root = root;
+    root = directory;
+    prepare_storage_mountpoints();
+    root = previous_root;
+    assert(!mkdir(path, 0755) && !rmdir(path));
+    fixture_path(path, directory, "mnt/data/100");
+    assert(!mkdir(path, 0711) && !rmdir(path));
+    fixture_path(path, directory, "mnt/data"); assert(!rmdir(path));
+    fixture_path(path, directory, "mnt"); assert(!rmdir(path));
+    assert(!rmdir(directory));
+    puts("PASS missing storage parent reproduced; production guest mountpoint permits external/per-user children");
+}
+
 static int evaluate(const struct bpf_insn *instructions, size_t count,
                     uint32_t type, uint32_t major_number, uint32_t minor_number)
 {
@@ -174,6 +222,27 @@ static int evaluate(const struct bpf_insn *instructions, size_t count,
 
 int main(int argc, char **argv)
 {
+    if (argc == 5 && !strcmp(argv[1], "-L")) {
+        assert(!strcmp(argv[2], "W,E,F") && !strcmp(argv[3], "-z") && !strcmp(argv[4], "2000"));
+        errno = 0;
+        assert(fcntl(0, F_GETFD) == -1 && errno == EBADF);
+        for (int fd = 3; fd < 256; ++fd) {
+            errno = 0;
+            assert(fcntl(fd, F_GETFD) == -1 && errno == EBADF);
+        }
+        const char *mode = getenv("HMOS_HILOG_TEST_MODE");
+        if (mode && !strcmp(mode, "eof-stall")) {
+            close(1); close(2);
+            for (;;) pause();
+        }
+        if (mode && !strcmp(mode, "flood")) {
+            char text[4096]; memset(text, 'H', sizeof(text));
+            for (;;) if (write(1, text, sizeof(text)) < 0) _exit(1);
+        }
+        dprintf(1, "HiLog fixture: clean descriptors; stdout\n");
+        dprintf(2, "HiLog fixture: stderr\n");
+        return 0;
+    }
     if (argc == 3 && !strcmp(argv[1], "--formatted-image")) {
         int image = open(argv[2], O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
         struct stat st;
@@ -186,6 +255,11 @@ int main(int argc, char **argv)
     assert(argc == 1);
     mapper_fixtures();
     delayed_device_fixture();
+    storage_mountpoint_fixture();
+    hilog_fixture("normal", "/proc/self/exe", true);
+    hilog_fixture("missing", "/hmos-missing-hilog-fixture", false);
+    hilog_fixture("flood", "/proc/self/exe", false);
+    hilog_fixture("eof-stall", "/proc/self/exe", false);
     assert(preserve_boot_permissive("0", "console=tty0 androidboot.selinux=permissive"));
     assert(!preserve_boot_permissive("1", "console=tty0"));
     assert(!preserve_boot_permissive("0", "console=tty0 enforcing=1"));

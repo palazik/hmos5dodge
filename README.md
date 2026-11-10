@@ -9,18 +9,20 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 
 ## Status
 
-**Revision 8 is built and validated; its OP13 boot test is pending.**
+**Revision 8's IPC module works on OP13; the phone still shows its static OnePlus logo.**
 
-Revision 7 reached native init but stalled with missing access-token setup and
-repeated service-registration denials. Revision 8 adds a HarmonyOS IPC module
-inside vendor_dlkm.img and connects the bootstrap to its separate Binder/token
-devices. The exact runtime module passed token and nested-Binder tests on the
-unchanged stock 6.6.118 kernel in QEMU, including the production device aliases.
-The supplied kernel source was used to build the module; no kernel Image or
-vendor_boot change was made. See [IPC validation](op13/ipc/README.md) and
-[native startup diagnostics](op13/NATIVE-STARTUP.md).
-[Userdata handling](op13/DSU-DATA-INITIALIZATION.md) and native policy binaries
-remain unchanged. Full framework boot on the phone remains unresolved.
+The new phone logs show native Binder/token checks passing, successful service
+registrations and render/app-framework readiness events. No HarmonyOS frame
+or boot animation is established. User storage startup then fails while making
+virtual directories, and HDF's ready-event parameter write is denied.
+Revision 9 adds the missing guest mountpoint parent, restores the donor's exact
+HDF parameter permission entry in the loaded system path, and captures bounded
+HiLog warnings/errors plus UI/HDF process state. See the
+[attempt-8 diagnosis](op13/ATTEMPT8.md) and [test instructions](op13/TESTING.md).
+Only system.img changes from revision 8. The stock kernel Image, vendor_boot,
+working IPC module, all seven other images, native policy binaries and
+[userdata allocation logic](op13/DSU-DATA-INITIALIZATION.md) remain unchanged.
+Full framework boot on the phone remains unresolved.
 
 - Separate partition images and the DSU ZIP have been built and checked.
 - OP13 vendor contents, permissions, capabilities and symlinks are preserved.

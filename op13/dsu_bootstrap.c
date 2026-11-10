@@ -13,6 +13,7 @@
 #include <linux/fs.h>
 #include <poll.h>
 #include <sched.h>
+#include <signal.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -126,6 +127,14 @@ static void root_directory(const char *suffix, mode_t mode)
     char path[512];
     rootpath(path, sizeof(path), suffix);
     directory(path, mode);
+}
+
+static void prepare_storage_mountpoints(void)
+{
+    // The filtered donor tmpfs mount formerly created this parent implicitly.
+    // Guest / is already tmpfs. Native storage creates per-user children here;
+    // no block device or persistent userdata allocation is changed.
+    root_directory("/mnt/data", 0755);
 }
 
 static void bind_path(const char *source, const char *target, bool readonly)
@@ -292,21 +301,154 @@ static void record_init_state(int output, size_t *used, size_t limit)
     append_native_log(output, "\n", 1, used, limit);
 }
 
+static void record_ui_processes(int output, size_t *used, size_t limit)
+{
+    const char *names[] = {"render_service", "bootanimation", "hdf_devmgr", "hdf_devhost",
+        "composer_host", "allocator_host", "foundation", "appspawn", "hilogd", "SceneBoard",
+        "sceneboard", "SuperLauncher"};
+    DIR *proc = opendir("/proc");
+    if (!proc) return;
+    const char heading[] = "\n--- native UI/HDF process inventory ---\n";
+    append_native_log(output, heading, sizeof(heading) - 1, used, limit);
+    struct dirent *entry;
+    unsigned found = 0;
+    while (found < 64 && (entry = readdir(proc))) {
+        bool numeric = entry->d_name[0] != 0;
+        for (const char *p = entry->d_name; *p; ++p) if (*p < '0' || *p > '9') numeric = false;
+        if (!numeric || strlen(entry->d_name) > 10) continue;
+        char path[128], comm[64];
+        snprintf(path, sizeof(path), "/proc/%.10s/comm", entry->d_name);
+        if (read_text(path, comm, sizeof(comm))) continue;
+        bool selected = false;
+        for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i)
+            if (!strcmp(comm, names[i])) selected = true;
+        if (!selected) continue;
+        ++found;
+        char text[2048];
+        int length = snprintf(text, sizeof(text), "PID %.10s comm=%s\n", entry->d_name, comm);
+        append_native_log(output, text, length, used, limit);
+        const char *files[] = {"status", "wchan", "cmdline"};
+        for (size_t i = 0; i < sizeof(files) / sizeof(files[0]); ++i) {
+            snprintf(path, sizeof(path), "/proc/%.10s/%s", entry->d_name, files[i]);
+            int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+            ssize_t count = fd < 0 ? -1 : read(fd, text, sizeof(text));
+            if (fd >= 0) close(fd);
+            if (count <= 0) continue;
+            for (ssize_t j = 0; j < count; ++j) if (!text[j]) text[j] = ' ';
+            append_native_log(output, text, count, used, limit);
+            append_native_log(output, "\n", 1, used, limit);
+        }
+    }
+    closedir(proc);
+}
+
+struct hilog_snapshot {
+    pid_t child;
+    int input;
+    long long deadline;
+    size_t bytes;
+};
+
+static int start_hilog_snapshot(struct hilog_snapshot *snapshot, const char *binary, unsigned timeout_ms)
+{
+    if (snapshot->child) { errno = EBUSY; return -1; }
+    int descriptors[2];
+    if (pipe2(descriptors, O_CLOEXEC)) return -1;
+    if (fcntl(descriptors[0], F_SETFL, O_NONBLOCK)) {
+        int saved = errno; close(descriptors[0]); close(descriptors[1]); errno = saved; return -1;
+    }
+    pid_t parent = getpid(), child = fork();
+    if (child < 0) {
+        int saved = errno; close(descriptors[0]); close(descriptors[1]); errno = saved; return -1;
+    }
+    if (!child) {
+        if (prctl(PR_SET_PDEATHSIG, SIGKILL) || getppid() != parent) _exit(124);
+        // The collector has already dropped capabilities and enabled NNP.
+        // The command receives only pipe stdout/stderr: no metadata file,
+        // kernel-log stream, exec-status pipe or old-root descriptor.
+        if (dup2(descriptors[1], 1) < 0 || dup2(descriptors[1], 2) < 0 ||
+            fcntl(1, F_SETFD, 0) || fcntl(2, F_SETFD, 0)) _exit(125);
+        close(0);
+        if (syscall(__NR_close_range, 3U, ~0U, 0)) _exit(126);
+        // -z is already nonblocking; this donor rejects combining it with -x.
+        execl(binary, "hilog", "-L", "W,E,F", "-z", "2000", NULL);
+        dprintf(2, "HiLog query exec failed: errno=%d\n", errno);
+        _exit(127);
+    }
+    close(descriptors[1]);
+    *snapshot = (struct hilog_snapshot){child, descriptors[0], monotonic_ms() + timeout_ms, 0};
+    return 0;
+}
+
+static void stop_hilog_snapshot(struct hilog_snapshot *snapshot)
+{
+    if (snapshot->child) kill(snapshot->child, SIGKILL); // only our query child
+    if (snapshot->input >= 0) close(snapshot->input);
+    snapshot->input = -1;
+}
+
+static void pump_hilog_snapshot(struct hilog_snapshot *snapshot, int output, size_t *used, size_t limit)
+{
+    if (!snapshot->child) return;
+    if (snapshot->input >= 0) {
+        for (unsigned batch = 0; batch < 16; ++batch) {
+            char text[4096];
+            size_t room = 256U * 1024U - snapshot->bytes;
+            if (!room || *used >= limit) { stop_hilog_snapshot(snapshot); break; }
+            ssize_t count = read(snapshot->input, text, room < sizeof(text) ? room : sizeof(text));
+            if (count > 0) {
+                snapshot->bytes += count;
+                append_native_log(output, text, count, used, limit);
+            } else if (!count || (errno != EAGAIN && errno != EINTR)) {
+                close(snapshot->input); snapshot->input = -1;
+                break;
+            } else break;
+        }
+    }
+    if (monotonic_ms() >= snapshot->deadline) stop_hilog_snapshot(snapshot);
+    // Even a wedged query must not block the recorder's kernel stream/deadline.
+    int status;
+    pid_t done = waitpid(snapshot->child, &status, WNOHANG);
+    if (done == snapshot->child || (done < 0 && errno == ECHILD)) {
+        // Drain final pipe bytes before resetting the reaped child's state.
+        if (snapshot->input >= 0) {
+            char tail[4096];
+            for (unsigned batch = 0; batch < 16 && snapshot->bytes < 256U * 1024U; ++batch) {
+                size_t room = 256U * 1024U - snapshot->bytes;
+                ssize_t count = read(snapshot->input, tail, room < sizeof(tail) ? room : sizeof(tail));
+                if (count <= 0) break;
+                snapshot->bytes += count;
+                append_native_log(output, tail, count, used, limit);
+            }
+            close(snapshot->input);
+        }
+        char result[160];
+        snprintf(result, sizeof(result), "\n--- HiLog query ended: status=%d bytes=%zu ---\n",
+                 done > 0 ? status : -1, snapshot->bytes);
+        append_native_log(output, result, strlen(result), used, limit);
+        snapshot->child = 0; snapshot->input = -1;
+    }
+}
+
 static void native_record_loop(int kernel, int output, int exec_pipe, unsigned duration_ms, size_t limit)
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 8; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 9; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
     if (start < 0) return;
-    struct pollfd inputs[] = {{kernel, POLLIN, 0}, {exec_pipe, POLLIN, 0}};
+    struct hilog_snapshot snapshot = {.input = -1};
+    const unsigned snapshot_times[] = {10000, 15000, 25000, 45000, 90000, 150000, 175000};
+    size_t next_snapshot = 0;
+    struct pollfd inputs[] = {{kernel, POLLIN, 0}, {exec_pipe, POLLIN, 0}, {-1, POLLIN, 0}};
     while (used < limit) {
         long long now = monotonic_ms();
         if (now < 0 || now - start >= duration_ms) break;
         int remaining = duration_ms - (now - start);
-        int ready = poll(inputs, 2, remaining < 250 ? remaining : 250);
+        inputs[2].fd = snapshot.input;
+        int ready = poll(inputs, 3, remaining < 250 ? remaining : 250);
         if (ready < 0 && errno == EINTR) continue;
         if (ready < 0) break;
         if (inputs[1].fd >= 0 && inputs[1].revents) {
@@ -347,12 +489,27 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
         now = monotonic_ms();
         if (now >= next_state) {
             record_init_state(output, &used, limit);
+            record_ui_processes(output, &used, limit);
             next_state = now + 15000;
+        }
+        pump_hilog_snapshot(&snapshot, output, &used, limit);
+        if (!snapshot.child && next_snapshot < sizeof(snapshot_times) / sizeof(snapshot_times[0]) &&
+            now - start >= snapshot_times[next_snapshot]) {
+            char title[160];
+            snprintf(title, sizeof(title), "\n--- HiLog warning/error snapshot at %lld ms ---\n", now - start);
+            append_native_log(output, title, strlen(title), &used, limit);
+            if (start_hilog_snapshot(&snapshot, "/system/bin/hilog", 3000)) {
+                snprintf(title, sizeof(title), "HiLog query unavailable: errno=%d\n", errno);
+                append_native_log(output, title, strlen(title), &used, limit);
+            }
+            ++next_snapshot;
         }
         // Retain evidence after a forced reboot, rather than waiting until
         // the recorder exits. Only this fixed regular log file is written.
         if (fdatasync(output)) break;
     }
+    stop_hilog_snapshot(&snapshot);
+    if (snapshot.child) waitpid(snapshot.child, NULL, WNOHANG);
     fdatasync(output);
 }
 
@@ -928,7 +1085,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 8; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 9; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
@@ -939,6 +1096,7 @@ int main(int argc, char **argv)
         "/mnt", "/tmp", "/log", "/config", "/storage", "/sec_storage", "/module_update",
         "/preload", "/version", "/updater", "/eng_chipset", "/eng_system"};
     for (size_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); ++i) root_directory(dirs[i], 0755);
+    prepare_storage_mountpoints();
     dsu_bind("/system", "/system", "system_gsi");
     root_bind("/system/bin/hmos-native-init", "/system/bin/init", true);
     dsu_bind("/vendor", "/vendor", "vendor_gsi");

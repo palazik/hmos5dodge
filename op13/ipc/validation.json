@@ -1,5 +1,5 @@
 {
-  "status": "stock-kernel-vm-passed; revision-8-phone-untested",
+  "status": "stock-kernel IPC confirmed on OP13 in revision 8; full framework still stalls",
   "provided_source_version": "6.6.144",
   "kernel_image_built": false,
   "loadable_module_built": true,
@@ -19,7 +19,7 @@
     "stock_kernel_sha256": "0b4b3aadd775009d88f39d0738ee7fa1a8a053444f668c2a762d0ea31f86e6a5",
     "kernel_release": "6.6.118-android15-8-g93e223c276e7-abogki500782043-4k",
     "module_sha256": "8fd408384b0accd695ebe9069be5f39b05cbe2620c68482c8c29b1680d7602e8",
-    "bootstrap_source_sha256": "d12ed6fabde906178322fc82733ea0cff542d49d3340cb765da2702614bbd240",
+    "bootstrap_source_sha256": "379f0de7b63ba76d647f0052750a51dcd5a1530441ed71b62e72b937b3fe6c5c",
     "module_load_flags": 0,
     "production_ipc_aliases_exercised": true,
     "kernel_image_modified": false,
@@ -35,5 +35,31 @@
     "used_to_override_stock_metadata": false
   },
   "upstream_files_hash_verified": 21,
-  "prepared_source_tests_passed": 3
+  "prepared_source_tests_passed": 3,
+  "phone_result_revision8": {
+    "revision": 8,
+    "phone_boot_tested": true,
+    "full_framework_boot_succeeded": false,
+    "visible_screen": "static OnePlus boot logo; HarmonyOS boot animation not observed",
+    "module_loaded_on_op13": true,
+    "native_binder_and_token_checks_passed": true,
+    "failed_to_set_access_token_records": 0,
+    "samgr_permission_denied_records": 0,
+    "samgr_insert_messages": 158,
+    "render_service_ready_event_seen": true,
+    "app_framework_ready_event_seen": true,
+    "storage_start_user_failed": true,
+    "hdf_ready_parameter_write_denied": true,
+    "bootstrap_log": {
+      "lines": 505,
+      "bytes": 21646,
+      "sha256": "b1a6abb0f0ce0a29a40bae9795a839e7da14dcc73e2bbf5b470388fb4ea7fe19"
+    },
+    "native_log": {
+      "lines": 13530,
+      "bytes": 849805,
+      "sha256": "3eb70c83cce12d628d17709e4639157078951623097305dc4c54a38494e46938"
+    },
+    "connected_device_operations": "read-only capture completed; device released"
+  }
 }
