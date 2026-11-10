@@ -1,5 +1,38 @@
 # Native init diagnostics
 
+## Revision-7 phone result
+
+The supplied bootstrap-v7.txt contains 415 lines / 17,567 bytes; the newest
+attempt begins at line 332. Native-v7.txt contains 19,064 lines / 1,188,212
+bytes. All native lines were indexed locally, with repeated payloads grouped
+for review. Raw logs and device captures stay outside the repository.
+
+All eight guest mounts, read-only stock ODM, writable DSU data and the real
+guest mount root succeed. Native init executes as PID 1. Its policy-load
+message reports success, and later AVC records show permissive=1. Subsequent
+PID 1 mount snapshots retain the guest root and writable data across sandbox
+namespace changes. This validates the previous mount-root and mode corrections.
+
+The owner still sees the OnePlus logo. Init reports failed access-token setup
+for services; /dev/access_token_id is absent. The stock Binder driver rejects
+the native feature ioctl c008621e with EINVAL. Samgr emits
+`AddSystemAbilityInner PERMISSION DENIED!` 422 times. Ordinary Binder exchange
+is partially working: storage_daemon can find samgr, so the evidence does not
+show a completely broken Binder transport. Render-service startup and a ready
+event also do not prove a displayed frame or a booted desktop.
+
+The available OpenHarmony IPC source consults feature support before obtaining
+the Binder caller token; a missing token can cause native authorization failure.
+Together these findings make genuine task-token inheritance and Binder token
+transport the next target. They do not establish that correcting IPC alone
+will complete the boot. HDF host exits and later graphics/service failures
+still require investigation after usable service registration is established.
+
+The [IPC prototype](ipc/README.md) uses the owner's supplied kernel source for
+host compilation only. No new kernel Image or loadable module is delivered,
+and revision 7 has not been repacked. The attempt-7 phone capture was read-only
+and completed; the device can be disconnected.
+
 The complete revision-4 phone log was 167 lines / 7,034 bytes. It included
 earlier attempts; the latest attempt began at line 88. All eight DSU partition
 mounts and the read-only stock ODM bind passed. Fresh DSU data initialization

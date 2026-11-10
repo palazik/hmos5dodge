@@ -11,6 +11,8 @@
 | `op13` (except the files listed separately below) | OP13 port tooling, DSU handoff, storage integration and offline checks | Apache-2.0 |
 | `op13/dsu_bootstrap.c` mount/formatter-device/logging adaptations | additionally informed by KSN2redawew/hmos5giuluac; individual commits and adaptations documented in op13/FORK-REVIEW.md | Apache-2.0 |
 | `op13/stock_probe.c`, `op13/build_probe.sh` | read-only stock-kernel diagnostic | MIT |
+| `op13/ipc/upstream/compat/ipc`, imported IPC tests and typed API references | matejkoo217/anyhmos_xiaomi_fuxi at `748c8fd3b2b61ad1083db032098f34770de723d2`, based on AnyHarmonyOSNext/anyhmos_xiaomi_sheng; Linux Binder code from Google and access-token code from Huawei | GPL-2.0 / GPL-2.0-only as marked in each source; see LICENSES/GPL-2.0.txt |
+| generated `private_api.c` prepared by `op13/ipc/prepare.py` | OP13 Linux 6.6 KCFI-checked helper resolver, used with the imported GPL IPC implementation | GPL-2.0 |
 | `src/audio/vdi` | OpenHarmony drivers_peripheral audio VDI headers | Apache-2.0 |
 | `src/audio/sweet_audio_vdi.cpp`, `patches/31-audio/files` | this project, with tinyalsa (BSD-3-Clause) | Apache-2.0 |
 | `src/huks`, `patches/21-huks-software/files` | OpenHarmony security_huks, OpenSSL 3 | Apache-2.0 |

@@ -1,0 +1,92 @@
+{
+  "repository": "https://github.com/matejkoo217/anyhmos_xiaomi_fuxi",
+  "commit": "748c8fd3b2b61ad1083db032098f34770de723d2",
+  "parent_project": "https://github.com/AnyHarmonyOSNext/anyhmos_xiaomi_sheng",
+  "purpose": "Unmodified reference for OP13 Linux 6.6 IPC adaptation; not included in DSU images",
+  "files": [
+    {
+      "path": "compat/ipc/Makefile",
+      "sha256": "12cb7846d2394b14ab13043ca2639deaeb3c1c118b4e3103547f284cd1409bf1"
+    },
+    {
+      "path": "compat/ipc/access_tokenid.c",
+      "sha256": "e90435cfbe6fd00d329f945cb24cfcef3fb0180da810bb598b25895639be8bbd"
+    },
+    {
+      "path": "compat/ipc/access_tokenid.h",
+      "sha256": "a8e0461a71f3791a809c6a597aa9eddaa74527fe4abd2d0517af24c3c4760f1a"
+    },
+    {
+      "path": "compat/ipc/ace5_tokens.c",
+      "sha256": "bf27e6cf6a312a793cf854b0501e53680d49703b23dd33dd5dad457f8b7f7a75"
+    },
+    {
+      "path": "compat/ipc/ace5_tokens.h",
+      "sha256": "6bf19607f0dd83d917481d9c0874bc5534a3a33bde10633c02b049723a9caa4e"
+    },
+    {
+      "path": "compat/ipc/binder.c",
+      "sha256": "53c4c9acff5e52cd9a304acc838808dfe80e5f228da3c2ddb9c25d935bf9fc7b"
+    },
+    {
+      "path": "compat/ipc/binder_alloc.c",
+      "sha256": "9e7e01f90668876d8215929c056cc82631b91162534fe1c68ab764e70272d836"
+    },
+    {
+      "path": "compat/ipc/binder_alloc.h",
+      "sha256": "d09ad816fc55c1f4059d516ec312e9552606fc75f4d5c9ad9c086b189a245f15"
+    },
+    {
+      "path": "compat/ipc/binder_internal.h",
+      "sha256": "6a536cce808191d135e16120560988fb6a584a5e371c545a16e4b02336a3c2e7"
+    },
+    {
+      "path": "compat/ipc/binder_trace.h",
+      "sha256": "e70ff350a5d32580196fa934ac9d70f6f8963767cb41ae9277563b4fe1ad867e"
+    },
+    {
+      "path": "compat/ipc/dbitmap.h",
+      "sha256": "4e30d8f64337735bdda142193db861cc809759373cd7ce92a17ffcad145de1b9"
+    },
+    {
+      "path": "compat/ipc/hmos_config.h",
+      "sha256": "7da98ae3267b9f16b714ec379e221d1d97f441ca8ae65b8196ed3b5868736cf6"
+    },
+    {
+      "path": "compat/ipc/private_api.c",
+      "sha256": "15c33183a4e8b3cd2d47d0531b400c88e66abbd9385d4110dc995ae78d62878c"
+    },
+    {
+      "path": "compat/ipc/private_api.h",
+      "sha256": "1acfd6090fe2d6b9781db299f6d02921995c54c9112be76f40a4c61185dbfb75"
+    },
+    {
+      "path": "compat/ipc/sheng_hmos_api_v1.h",
+      "sha256": "6363ed42233aa642437f33a8364ff407bb62787301b9580913f6e492639c55fa"
+    },
+    {
+      "path": "tests/ipc/binder_nested.c",
+      "sha256": "38e528d510548973d4cde88e119b3985708b54ba0fe37ed21362fba958c6f1e2"
+    },
+    {
+      "path": "tests/ipc/token_contract.c",
+      "sha256": "5828126b3c9c77dc45f613dac5a02b0b6dd34a2aa71b15aefe6874f05b846bd0"
+    },
+    {
+      "path": "external/overlays/hmos-work--gki-sheng-exports/drivers/android/sheng_hmos_api_v1.h",
+      "sha256": "6363ed42233aa642437f33a8364ff407bb62787301b9580913f6e492639c55fa"
+    },
+    {
+      "path": "external/overlays/hmos-work--gki-sheng-exports/drivers/android/sheng_hmos_exports.c",
+      "sha256": "5e3867b5e9562616d8a12f641ab79d364b12e1b7f9096644139b7bab1e06c959"
+    },
+    {
+      "path": "external/patches/hmos-work--gki-sheng-exports.patch",
+      "sha256": "65a28c8f464e3db34e4ec602cdb0414d25cdf319ec713d6991837a9c3cf1d420"
+    },
+    {
+      "path": "external/licenses/hmos-work--gki-sheng-exports/COPYING",
+      "sha256": "fb5a425bd3b3cd6071a3a9aff9909a859e7c1158d54d32e07658398cd67eb6a0"
+    }
+  ]
+}

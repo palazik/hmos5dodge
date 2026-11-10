@@ -9,16 +9,18 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 
 ## Status
 
-**The candidate has passed offline validation. Boot on OP13 remains unverified.**
+**Revision 7 installs and reaches native init, but remains at the OnePlus logo.**
 
-Revision 6 installed the guest mount root and loaded native SELinux policy.
-Its native loader switched the owner's permissive test to enforcing, and
-subsequent diagnostic access was denied. Revision 7 preserves an initially
-permissive boot through the native config while retaining native enforcing
-requests. The actual donor loader/config parser passed isolated ARM64 tests for
-both modes and command-line overrides. See [native startup diagnostics](op13/NATIVE-STARTUP.md).
-Full framework boot remains unresolved. [Userdata handling](op13/DSU-DATA-INITIALIZATION.md),
-the kernel/modules and native policy binaries are unchanged.
+The phone logs confirm the guest mount root, writable DSU data and successful
+native SELinux policy loading. Permissive now persists through startup. Native
+services run, but access-token setup fails and samgr repeatedly denies service
+registration. The next investigation is genuine HarmonyOS Binder/access-token
+support through an additional module while retaining the stock kernel Image.
+The [IPC prototype](op13/ipc/README.md) compiles against the supplied source;
+compatibility with the running stock kernel remains unverified. It is not in
+the current ZIP. See [native startup diagnostics](op13/NATIVE-STARTUP.md).
+[Userdata handling](op13/DSU-DATA-INITIALIZATION.md), the packaged kernel/modules
+and native policy binaries are unchanged.
 
 - Separate partition images and the DSU ZIP have been built and checked.
 - OP13 vendor contents, permissions, capabilities and symlinks are preserved.
@@ -44,7 +46,7 @@ the kernel/modules and native policy binaries are unchanged.
 
 The eight images are packaged together as `hmos5-op13-dsu.zip`. The phone's
 mounted stock ODM EROFS is reused read-only; `odm.img` is omitted. Output copies receive
-local development AVB signatures; device acceptance remains unverified.
+local development AVB signatures; revision 7 reached native init on the phone.
 Bootloader, physical vbmeta, boot, vendor_boot, dtbo and firmware-partition
 images are outside this DSU package. OP13 anti-rollback constraints still apply.
 
@@ -71,5 +73,10 @@ environment, as described in the port documentation.
 ## Credits and licensing
 
 Based on [tsryzenstech/hmos2sweet](https://github.com/tsryzenstech/hmos2sweet),
-with OP13-specific adaptations. Component origins and licenses are listed in
+with OP13-specific adaptations. Thanks to
+[matejkoo217 (~jkoo)](https://github.com/matejkoo217) for
+[anyhmos_xiaomi_fuxi](https://github.com/matejkoo217/anyhmos_xiaomi_fuxi) and its
+boot/display fixes, and to [AnyHarmonyOSNext](https://github.com/AnyHarmonyOSNext)
+for the underlying Binder/access-token compatibility sources. Imported code
+retains its upstream licensing and provenance. Component origins are listed in
 [NOTICE.md](NOTICE.md); see also [LICENSE](LICENSE).

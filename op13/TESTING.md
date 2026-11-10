@@ -1,5 +1,11 @@
 # OP13 handoff revision 7
 
+The owner tested revision 7: it remains at the OnePlus logo. The saved logs
+confirm native init and policy loading with permissive retained. Access-token
+setup and service registration remain unresolved; see NATIVE-STARTUP.md.
+The new IPC sources are a host-side prototype, absent from this package.
+Reinstalling the same ZIP will not add their functionality.
+
 Revision 6 installed the guest mount root and the kernel accepted native SELinux
 policy. Its donor config forced the permissive test into enforcing, after
 which diagnostic access was denied. The later framework state remains unknown.
@@ -11,7 +17,7 @@ modes and both native argument overrides passed ARM64 tests using the actual
 donor loader/parser; only the test's kernel calls are counters. These test
 implementations are not included in the ROM.
 
-Full phone boot remains unverified. Kernel/module and policy binaries, the
+Full framework boot has not succeeded. Kernel/module and policy binaries, the
 hardware startup plan, seven other images and userdata handling are unchanged.
 Only system.img changes. See NATIVE-STARTUP.md for evidence and remaining uncertainty.
 
