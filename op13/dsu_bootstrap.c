@@ -159,6 +159,17 @@ static void root_mount(const char *source, const char *suffix, const char *type,
     if (mount(source, target, type, flags, options)) fatal(target);
 }
 
+static void expose_graphics_runtime(void)
+{
+    // /hmos belongs to the Android-mounted image root, outside the /system
+    // subtree bound into the guest. Keep the reviewed graphics directory
+    // reachable after pivot_root; the loader's /hmos/display path needs it.
+    root_directory("/hmos", 0755);
+    root_directory("/hmos/display", 0755);
+    root_bind("/hmos/display", "/hmos/display", true);
+    log_line("native graphics runtime exposed read-only at /hmos/display before root switch");
+}
+
 static void pivot_native_root(void)
 {
     // chroot alone leaves the mount namespace rooted at Android's first-stage
@@ -434,7 +445,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 11; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 12; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -1085,7 +1096,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 11; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 12; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
@@ -1197,6 +1208,7 @@ int main(int argc, char **argv)
     root_bind("/hmos/policy/developer_policy", "/vendor/etc/selinux/prebuild_sepolicy/developer_policy", true);
     root_bind("/hmos/display/libdisplay_buffer_vdi_impl.z.so", "/vendor/lib64/libdisplay_buffer_vdi_impl.z.so", true);
     root_bind("/hmos/display/libdisplay_composer_vdi_impl.z.so", "/vendor/lib64/libdisplay_composer_vdi_impl.z.so", true);
+    expose_graphics_runtime();
     root_bind("/hmos/ui/display_manager_config.xml", "/sys_prod/etc/window/resources/display_manager_config.xml", true);
     root_bind("/hmos/ui/hgm_policy_config.xml", "/sys_prod/etc/graphic/hgm_policy_config.xml", true);
     log_line("stage=device-filter");

@@ -2,18 +2,19 @@
 
 This is an **OP13-specific port**, using DSU as its installation and boot
 mechanism. It targets the full supplied HMOS5 framework, SceneBoard and
-SuperLauncher. The owner tested revision 10: the IPC module loads and the
+SuperLauncher. The owner tested revision 11: the IPC module loads and the
 native API checks pass, but the static OnePlus boot logo remains. Native
 service registrations, render readiness and app-framework readiness now occur;
 these events do not prove a displayed frame or the HarmonyOS boot animation.
 
-The allocator/composer hosts now start with their correct identities. Revision
-11 supplies their missing native service implementations and dependencies, and
-places the native graphics runtime before Android vendor libraries in the
-HarmonyOS loader search paths. Native allocator/composer factories pass the
-isolated loader test. Only system.img changes from revision 10;
+The allocator/composer hosts start with their correct identities. Revision 11's
+native graphics directory was packed outside the subtree exposed to the guest.
+Revision 12 binds only /hmos/display read-only into that guest before pivot_root
+and includes it in the native system/chipset service-root templates.
+The production root-switch fixture reproduces the omission and verifies native
+allocator/composer construction after the corrected handoff. Only system.img changes from revision 11;
 the kernel Image, vendor_boot, working IPC module and userdata allocation logic
-remain unchanged. Read [ATTEMPT10.md](ATTEMPT10.md), [IPC details](ipc/README.md)
+remain unchanged. Read [ATTEMPT11.md](ATTEMPT11.md), [IPC details](ipc/README.md)
 and [test instructions](TESTING.md). Full phone boot remains unverified.
 
 The local package is:

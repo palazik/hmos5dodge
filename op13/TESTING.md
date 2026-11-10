@@ -1,13 +1,14 @@
-# OP13 handoff revision 11
+# OP13 handoff revision 12
 
-Revision 10 starts allocator_host and composer_host with the correct identities,
-but the static logo remains. Their dynamically named service implementations
-were missing, and Android's libdrm shadowed the native chipset-sdk library.
+Revision 11 still shows the static logo. Its native graphics libraries were
+packed but the /hmos/display directory was absent from the root used after the
+handoff, so native loading still fell back to Android libdrm.
 
-Revision 11 supplies the five native service/dependency DSOs and prefixes the
-native graphics runtime in both linker namespaces. A symlink selects the
-original HarmonyOS libdrm. The actual native HDI loader constructs both graphics
-implementations in the isolated ARM64 test. See ATTEMPT10.md.
+Revision 12 binds only that graphics directory read-only into the guest before
+the root switch and includes it in both native service-root templates. The
+new tests reproduce the omissions, then verify that both
+native graphics implementations construct after the production bind, pivot_root
+and namespace restoration. See ATTEMPT11.md.
 Only system.img changes. The working IPC module, kernel Image, vendor_boot
 and userdata logic are retained. This revision has offline/VM validation,
 not a successful phone boot result.
@@ -20,11 +21,13 @@ part of this test.
 Let it run for about three minutes before returning to Android, then collect:
 
 ```sh
-adb shell "su -c 'cat /metadata/hmos5dodge/bootstrap.log'" > bootstrap-v11.txt
-adb shell "su -c 'cat /metadata/hmos5dodge/native-startup.log'" > native-v11.txt
+adb shell "su -c 'cat /metadata/hmos5dodge/bootstrap.log'" > bootstrap-v12.txt
+adb shell "su -c 'cat /metadata/hmos5dodge/native-startup.log'" > native-v12.txt
 ```
 
-Find the newest revision-11 start in bootstrap.log. native-startup.log contains
+Find the newest revision-12 start in bootstrap.log and the new
+`native graphics runtime exposed read-only at /hmos/display before root switch`
+message. native-startup.log contains
 only the latest attempt, with the existing 4 MiB / 180-second bound. New sections
 start with `HiLog warning/error snapshot` and `native UI/HDF process inventory`.
 Each query uses the donor tool's nonblocking tail mode, is limited to 256 KiB

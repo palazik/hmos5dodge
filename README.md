@@ -9,16 +9,17 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 
 ## Status
 
-**Revision 10 starts both display hosts but still shows the static OnePlus logo. Revision 11 repairs native graphics implementation loading.**
+**Revision 11 still shows the static OnePlus logo. Revision 12 exposes the native graphics runtime after the root switch.**
 
-Native Binder/token checks pass; the previous storage and HDF parameter errors
-are absent. Revision 11 adds the missing native allocator/composer service
-implementations and their dependencies. A native graphics search path selects
-HarmonyOS libdrm instead of the incompatible Android vendor library. The actual
-donor HDI loader constructs both implementations in an isolated ARM64 test.
-See the [attempt-10 diagnosis](op13/ATTEMPT10.md) and
+Native Binder/token checks and display-host startup pass. Revision 11's native
+graphics files were packed but their /hmos/display directory was not projected
+into the guest root. Revision 12 exposes that directory read-only and includes
+it in both native service-root templates. A regression
+test reproduces the old failure, then constructs both native HDI implementations
+after the production graphics bind, pivot_root and namespace restoration.
+See the [attempt-11 diagnosis](op13/ATTEMPT11.md) and
 [test instructions](op13/TESTING.md). A first HarmonyOS frame remains unproven.
-Only system.img changes from revision 10. The stock kernel Image, vendor_boot,
+Only system.img changes from revision 11. The stock kernel Image, vendor_boot,
 working IPC module, all seven other images, native policy binaries and
 [userdata allocation logic](op13/DSU-DATA-INITIALIZATION.md) remain unchanged.
 Full framework boot on the phone remains unresolved.

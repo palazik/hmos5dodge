@@ -1,0 +1,24 @@
+{
+  "revision": 11,
+  "phone_boot_tested": true,
+  "full_framework_boot_succeeded": false,
+  "visible_screen": "static OnePlus boot logo; no HarmonyOS frame observed",
+  "connected_device_operations": "read-only capture complete; device released",
+  "native_binder_and_token_checks_passed": true,
+  "latest_bootstrap_start_line": 686,
+  "latest_bootstrap_stop_seen": false,
+  "both_graphics_hosts_persist_in_snapshots": true,
+  "android_libdrm_errno_relocation_records": 7,
+  "packed_graphics_runtime_visible_in_guest": false,
+  "finding_basis": "bootstrap projects system subtree and explicit binds; no hmos/display guest bind; omission reproduced after production pivot_root in regression fixture",
+  "bootstrap_log": {
+    "lines": 775,
+    "bytes": 33885,
+    "sha256": "33a4a08821b1fa78bc3b4bfb5d9e88222cf8e6356ca1fc9a8eb778ad339ea33d"
+  },
+  "native_log": {
+    "lines": 31970,
+    "bytes": 2520290,
+    "sha256": "43968cf2b2631ad77aceee32e2216d0080571ae68dac6c03f0e9682e671b3f6a"
+  }
+}

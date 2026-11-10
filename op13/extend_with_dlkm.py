@@ -159,7 +159,7 @@ def main():
     updated.update({'partitions': records, 'zip': package, 'component_validation': components, 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 11, 'selinux_mode_changed': False,
+        'handoff_revision': 12, 'selinux_mode_changed': False,
         'native_graphics_runtime': components['native_graphics_runtime'],
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,
@@ -172,7 +172,8 @@ def main():
                                     'scope': 'Kernel records, PID-1/UI process state and bounded read-only HiLog queries; latest handoff only',
                                     'hilog_query_limit_bytes': 262144, 'hilog_query_timeout_ms': 3000},
         'base_candidate': {'system_sha256': report['partitions']['system']['sha256'], 'packed_validation': base_validation,
-                           'last_phone_test': report.get('last_phone_test')},
+                           'last_phone_test': report.get('last_phone_test') or
+                           report.get('base_candidate', {}).get('last_phone_test')},
         'odm_source': 'Existing stock ODM EROFS mounted by Android first-stage; reused read-only',
         'dlkm_inputs': dlkm['images'], 'module_load_plan': dlkm['load_plan'],
         'dlkm_audit_scope': dlkm['scope'], 'captured_vendor_modules_byte_identical': dlkm['captured_vendor_modules_byte_identical']})

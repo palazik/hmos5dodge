@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 import unittest
-from graphics_runtime import native_config
+import json
+from graphics_runtime import native_config, sandbox_config, GRAPHICS_BIND
 
 
 class GraphicsNamespaceTests(unittest.TestCase):
@@ -22,3 +23,14 @@ class GraphicsNamespaceTests(unittest.TestCase):
                        native_config(self.donor())):
             with self.assertRaises(ValueError):
                 native_config(source)
+
+    def test_service_sandbox_changes_only_the_graphics_bind(self):
+        for kind in ('system', 'chipset'):
+            donor = {'sandbox-root': '/mnt/sandbox/' + kind,
+                'mount-bind-paths': [{'src-path': '/system/lib64', 'sandbox-path': '/system/lib64',
+                    'sandbox-flags': ['bind', 'rec', 'private']}], 'mount-bind-files': [{}], 'symbol-links': []}
+            result = json.loads(sandbox_config(json.dumps(donor).encode()))
+            self.assertEqual(result['mount-bind-paths'].pop(), GRAPHICS_BIND)
+            self.assertEqual(result, donor)
+            with self.assertRaises(ValueError):
+                sandbox_config(sandbox_config(json.dumps(donor).encode()))

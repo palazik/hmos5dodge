@@ -137,6 +137,9 @@ def main():
     tests.append(run('graphics-loader-test-build', ['bash', 'build/ohos-clang', '-std=c11', '-O2',
         '-Wall', '-Wextra', '-Werror', 'op13/graphics_loader_test.c', '-ldl', '-lc',
         '-o', display / 'graphics-loader-test'], env=environment))
+    tests.append(run('graphics-root-switch-test-build', ['clang', '-static', '-O2',
+        '-Wall', '-Wextra', '-Werror', 'op13/graphics_namespace_test.c',
+        '-o', bootstrap / 'graphics-namespace-test']))
     tests.append(run('arm64-native-graphics-namespaces-and-hdi-factories',
         ['python3', 'op13/check_graphics_runtime.py']))
     tests.append(run('arm64-input-backend-without-hdf', ['bash', 'op13/check_input_backend.sh']))

@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
-from graphics_runtime import BRIDGES, CONFIG, DRM_TARGET, install, verify
+from graphics_runtime import BRIDGES, CONFIG, DRM_TARGET, GRAPHICS_BIND, SANDBOX_CONFIGS, install, verify
 
 REPO = Path(__file__).resolve().parents[1]
 ROOT = REPO.parent
@@ -90,8 +90,34 @@ def main():
                     raise RuntimeError(label + ': ' + result.stdout[-3000:] + result.stderr[-1500:])
                 tests.append({'name': label, 'passed': True})
                 print('PASS native namespace/HDI loader', label, flush=True)
+        marker = fixture / 'namespace-marker'
+        marker.touch()
+        for action, expectation in (('omit', 'expect-stock-collision'), ('expose', 'expect-native'),
+                ('service-omit', 'expect-stock-collision'), ('service-expose', 'expect-native')):
+            if action.startswith('service-'):
+                for config in SANDBOX_CONFIGS:
+                    data = json.loads((runtime / config).read_bytes())
+                    assert data['mount-bind-paths'][-1] == GRAPHICS_BIND
+            command = list(common) + ['--uid', '0', '--gid', '0', '--cap-add', 'CAP_SYS_ADMIN',
+                '--cap-add', 'CAP_SYS_CHROOT', '--ro-bind', str(runtime / CONFIG), '/' + CONFIG,
+                '--ro-bind', str(runtime / 'hmos/display'), '/hmos/display',
+                '--ro-bind', str(ROOT / 'out/op13-display/graphics-loader-test'), '/vendor/bin/graphics-loader-test',
+                '--ro-bind', str(ROOT / 'out/op13-bootstrap/graphics-namespace-test'), '/test/namespace-test',
+                '--ro-bind', str(marker), '/test/graphics-namespace-fixture',
+                '--ro-bind', str(ROOT / 'work/qemu-aarch64-static'), '/test/qemu',
+                '--clearenv', '--setenv', 'PATH', '/system/bin:/vendor/bin',
+                '/test/namespace-test', action, '/vendor/bin/graphics-loader-test', expectation]
+            if expectation == 'expect-native':
+                command += dependencies
+            result = subprocess.run(command, capture_output=True, text=True, timeout=15)
+            label = 'production-root-switch-' + action
+            (runtime / (label + '.log')).write_text(result.stdout + result.stderr)
+            if result.returncode:
+                raise RuntimeError(label + ': ' + result.stdout[-3000:] + result.stderr[-1500:])
+            tests.append({'name': label, 'passed': True})
+            print('PASS production graphics bind/root switch and native loader', action, flush=True)
     (runtime / 'validation.json').write_text(json.dumps({'passed': True, 'tests': tests,
-        'scope': 'Actual donor musl namespace config, stock Android DRM collision, native graphics relocation and HDI factories; no DRM display device, service registration or frame tested.'}, indent=2) + '\n')
+        'scope': 'Actual donor musl namespace config, stock Android DRM collision, production graphics bind/pivot_root/setns, configured graphics bind in a nested service-root fixture, native graphics relocation and HDI factories; full native sandbox engine, DRM display device, service registration and frame untested.'}, indent=2) + '\n')
 
 
 if __name__ == '__main__':
