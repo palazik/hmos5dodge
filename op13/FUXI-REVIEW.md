@@ -30,10 +30,10 @@ establish that an arbitrary stock OP13 kernel can load the unchanged module.
 
 Imported 21 pinned files covering the IPC implementation, two native contract
 tests and the companion typed API references under ipc/upstream. The OP13
-Linux 6.6 preparation and object audit are described in ipc/README.md. They are
-host-only prototypes and are absent from the DSU ZIP. No custom kernel Image
-is being prepared, and the supplied kernel tree is the only tree used for
-compilation.
+Linux 6.6 preparation and object audit are described in ipc/README.md. The adapted module now passes real stock-kernel VM contracts and is included
+in revision 8 vendor_dlkm.img. No custom kernel Image is built; the supplied
+kernel tree is the only source tree used for compilation. The stock kernel
+Image and vendor_boot remain unchanged.
 
 Credits name matejkoo217 (~jkoo) and AnyHarmonyOSNext in the root README and
 NOTICE. GPL attribution, full license text and per-file provenance are retained.

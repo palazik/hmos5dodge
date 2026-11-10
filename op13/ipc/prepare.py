@@ -69,7 +69,13 @@ def main():
         '#include <linux/cfi.h>', '#include <linux/cfi_types.h>',
         '#ifndef CONFIG_CFI_CLANG', '#error "This prototype requires Linux KCFI"', '#endif']
     for name in names:
-        lines += [f'typeof({name}) *ace5_api_{name};', f'DEFINE_CFI_TYPE(op13_cfi_{name}, {name});']
+        # DEFINE_CFI_TYPE takes a declaration's address solely to request the
+        # compiler hash. Its anchor lives in .discard.addressable; mark that
+        # unused reference weak so modpost does not demand a private export.
+        # Actual calls still require successful probe lookup and a hash match.
+        lines += [f'extern typeof({name}) {name} __weak;',
+                  f'typeof({name}) *ace5_api_{name};',
+                  f'DEFINE_CFI_TYPE(op13_cfi_{name}, {name});']
     lines += ['static int resolve_helper(const char *name, u32 expected, void **result)', '{',
         '    struct kprobe probe = { .symbol_name = name };',
         '    int status = register_kprobe(&probe);',

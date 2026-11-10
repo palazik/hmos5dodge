@@ -122,11 +122,15 @@ def main():
     parser.add_argument('--host-security-patch', required=True)
     parser.add_argument('--vendor-additions', type=Path, required=True)
     parser.add_argument('--dlkm-audit', type=Path, required=True)
+    parser.add_argument('--ipc-module', type=Path, required=True)
+    parser.add_argument('--ipc-vm-report', type=Path, required=True)
     parser.add_argument('--startup-dir', type=Path, help='regenerated native startup tree')
     args = parser.parse_args()
     from prepare_dlkm import load_report, write_load_plan
     workspace, output = args.workspace.resolve(), args.output.resolve()
     dlkm = load_report(workspace, args.dlkm_audit)
+    from ipc.package_module import attach as attach_ipc
+    attach_ipc(workspace, dlkm, args.ipc_module, args.ipc_vm_report)
     if 'vendor_base_sha256' in dlkm and digest(workspace / 'op13_stock/vendor.img') != dlkm['vendor_base_sha256']:
         raise RuntimeError('vendor base is not from the audited module firmware')
     startup_dir = args.startup_dir or workspace / 'out/op13-startup'
@@ -236,6 +240,10 @@ def main():
     sources.update({name: row['source'] for name, row in dlkm['images'].items()})
     for name, source in sources.items():
         images[name] = output / (name + '.img')
+        if name == 'vendor_dlkm':
+            from ipc.package_module import patch as patch_ipc
+            dlkm['ipc_module']['packed_validation'] = patch_ipc(workspace / source, images[name], dlkm['ipc_module'])
+            continue
         shutil.copyfile(workspace / source, images[name])
         if subprocess.run(['avbtool', 'info_image', '--image', str(images[name])], capture_output=True).returncode == 0:
             command('avbtool', 'erase_footer', '--image', images[name])
@@ -251,7 +259,9 @@ def main():
     report = {'status': 'experimental-op13-only-multipart-dsu', 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 7, 'selinux_mode_changed': False,
+        'handoff_revision': 8, 'selinux_mode_changed': False,
+        'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
+        'additional_kernel_module': True,
         'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',
         'native_mount_root': 'pivot_root in a private mount namespace; old root detached',
         'native_selinux_config': 'Preserve boot-selected permissive mode through the native config; explicit native enforcing=1 takes precedence',

@@ -13,6 +13,7 @@ import zipfile
 from build_multipart import digest
 from image_utils import filesystem_info
 from selinux_config import permissive_config
+from ipc.package_module import verify as verify_ipc
 
 
 def remove_readback(target, output):
@@ -78,6 +79,12 @@ def main():
         if name in ('system', 'vendor'):
             # Incremental system builds update old directory/inode blocks too.
             # Check the logical files below instead of assuming a byte prefix.
+            continue
+        if name == 'vendor_dlkm' and report.get('native_ipc'):
+            ipc = report['native_ipc']
+            assert ipc['stock_kernel_vm']['passed']
+            payload_checks[name] = verify_ipc(root / source, image, Path(ipc['source']))
+            print('PASS stock vendor_dlkm contents/metadata and VM-tested IPC addition', flush=True)
             continue
         start = 0
         equal_prefix(root / source, image, start, fs_bytes(root / source))

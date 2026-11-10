@@ -1,5 +1,39 @@
 # Native init diagnostics
 
+## Revision 8: real stock-kernel IPC module
+
+The read-only phone capture supplied its 6,122,742-byte BTF data and core symbol
+names. The BTF matches the full stock boot-v4 kernel extent exactly. All 110,092
+core symbol names validate against its compressed symbol tables. The 140 direct
+imports are present and vendor-accessible; all 20 real private-helper KCFI
+hashes match. Actual stock export CRCs are used by normal Kbuild/modpost.
+No kernel version string, CRC entry or CFI check is forced or patched.
+
+The stripped runtime module loaded normally into that unchanged 6.6.118 kernel
+in QEMU with finit_module flags zero. Both native contract suites passed,
+including fork/thread tokens, real UID/GID permission gates, rejected spoofing,
+nested callbacks, first-caller identity and concurrent caller isolation. A
+second test exercised the exact production bootstrap device-alias function,
+owner/group 3020 and real feature/token ioctl checks. The RAM-only VM fixture
+has no physical storage or network and is excluded from the ROM.
+
+Revision 8 adds this exact module to /lib/modules/op13_hmos_ipc.ko inside a
+copy of stock vendor_dlkm.img, preserving all 468 original files/symlinks and
+473 inode metadata entries checked. The load plan has 130 unchanged stock
+modules followed by the IPC module. Its three separate misc Binder endpoints
+become /dev/binder, /dev/hwbinder and /dev/vndbinder, with /dev/access_token_id
+owned by 3020:3020. All four device identities enter the existing character
+allowlist. Missing module APIs stop the handoff with logs; there is no fallback
+to stock Binder pretending to support HarmonyOS tokens.
+
+Only system.img and vendor_dlkm.img change from revision 7. Kernel Image,
+vendor_boot, system_dlkm, existing stock modules, native policy binaries and
+userdata logic remain unchanged. Component checks and complete packed-image
+readback passed. These are VM/offline results; revision-8 phone boot and full
+SceneBoard startup remain untested. The phone capture is complete and the
+device can be disconnected.
+
+
 ## Revision-7 phone result
 
 The supplied bootstrap-v7.txt contains 415 lines / 17,567 bytes; the newest
@@ -28,9 +62,9 @@ transport the next target. They do not establish that correcting IPC alone
 will complete the boot. HDF host exits and later graphics/service failures
 still require investigation after usable service registration is established.
 
-The [IPC prototype](ipc/README.md) uses the owner's supplied kernel source for
-host compilation only. No new kernel Image or loadable module is delivered,
-and revision 7 has not been repacked. The attempt-7 phone capture was read-only
+The initial [IPC prototype](ipc/README.md) used the owner's supplied kernel source for
+host compilation only at that stage. Revision 7 did not contain the module;
+revision 8 below adds it after stock-kernel VM tests. The attempt-7 phone capture was read-only
 and completed; the device can be disconnected.
 
 The complete revision-4 phone log was 167 lines / 7,034 bytes. It included

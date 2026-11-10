@@ -2,20 +2,18 @@
 
 This is an **OP13-specific port**, using DSU as its installation and boot
 mechanism. It targets the full supplied HMOS5 framework, SceneBoard and
-SuperLauncher. It is an experimental offline candidate: **no OP13 boot has
-been verified**. The kernel is unchanged.
+SuperLauncher. Revision 8 is an experimental candidate with a VM-tested native
+IPC module. Full framework boot on OP13 remains unverified.
 
-Revision 6 installed the guest mount root and the kernel accepted native SELinux
-policy. The donor loader overrode the initially permissive test using its
-`SELINUX=enforcing` config; subsequent kernel/proc diagnostic access was denied.
-Revision 7 supplies a native permissive config only for an initially permissive
-boot without a recognized native `enforcing=1` override. Native enforcing
-requests retain their behavior. The actual donor loader and config parser pass
-isolated ARM64 tests for both configs and explicit command-line overrides.
-See [NATIVE-STARTUP.md](NATIVE-STARTUP.md). The native policy binaries, kernel,
-modules and [userdata logic](DSU-DATA-INITIALIZATION.md) are unchanged.
-A successful native boot has not been observed. Fork adaptations are documented in
-[FORK-REVIEW.md](FORK-REVIEW.md).
+Revision 7 reached native init, writable DSU data and successful native policy
+loading, but access-token setup and samgr registration failed. Revision 8 adds
+op13_hmos_ipc.ko to vendor_dlkm and uses its isolated Harmony Binder/token
+endpoints. The unchanged stock kernel accepted the exact module in a diskless
+QEMU VM and passed the real token and nested-Binder contracts, including the
+production bootstrap aliases. The kernel Image and vendor_boot remain stock;
+existing stock module bytes and userdata logic remain unchanged. See
+[IPC details](ipc/README.md), [native startup evidence](NATIVE-STARTUP.md),
+[fork review](FUXI-REVIEW.md) and [test instructions](TESTING.md).
 
 The local package is:
 `/home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-current/hmos5-op13-dsu.zip`.
@@ -30,7 +28,7 @@ The ZIP contains eight separate raw filesystem images (EROFS and ext4), with no 
 | --- | --- |
 | `system.img` | Supplied HMOS system; native init handoff, isolated DSU storage, curated startup, storage shim and OP13 display/policy payloads. |
 | `vendor.img` | **OP13 stock vendor**, fully unpacked/rebuilt with explicitly selected native HMOS runtime additions. |
-| `vendor_dlkm.img` | Vendor modules from the restored OP13 payload, in their unchanged ext4 filesystem. |
+| `vendor_dlkm.img` | OP13 stock vendor modules preserved in ext4, plus the VM-tested IPC module. |
 | `system_dlkm.img` | GKI modules from that same OP13 payload, in their unchanged EROFS filesystem. |
 | `sys_prod.img` | Supplied HMOS sys_prod filesystem, unchanged; initial UI overrides are bind-mounted during handoff. |
 | `chip_prod.img` | Supplied HMOS chip_prod filesystem, unchanged; curated HDF configuration is bind-mounted during handoff. |
@@ -120,7 +118,7 @@ allocation is not resized. The size is read from the DSU device selected in
 the app, not fixed to 25 GiB; the first-initialization bounds are 128 MiB to
 512 GiB, subject to available space and native storage requirements.
 There is no physical-userdata fallback.
-The guest receives private BinderFS nodes and a cgroup device filter
+The guest receives four isolated Harmony IPC misc aliases and a cgroup device filter
 that denies all block-device access. Kernel attachment/namespace behavior
 still needs a phone test; failures stop the handoff. No automatic reboot timer
 is added.
@@ -130,14 +128,15 @@ removed. No phone writes were performed during the read-only capture or the
 offline build. Filesystem initialization occurs only on the next DSU boot
 when the installer-wiped header is recognized; it is not a data-reset fallback.
 
-The current `vendor_dlkm` contains 458 modules, and `system_dlkm` contains
+The stock `vendor_dlkm` contains 458 modules; revision 8 adds one IPC module. `system_dlkm` contains
 96 GKI modules, from the newly restored firmware. The October capture is
 historical evidence and is not a source of modules for this candidate.
-The dependency-ordered 130-module display plan reads 58 files directly from
+The dependency-ordered 130-stock-module display plan reads 58 files directly from
 `vendor_dlkm`; 72 early modules are copied from the new `vendor_boot` ramdisk.
 It includes bound hardware supplier modules observed in working Android,
 which symbol-only dependencies missed. All 785 checked imports provided by
 modules in this plan have matching CRCs.
+The IPC module is then loaded from vendor_dlkm as the 131st planned entry.
 Already loaded modules are skipped. The standard
 `/system/lib/modules` link points at `/system_dlkm/lib/modules`. Normal kernel
 ABI and signature checks remain enabled, with no force flags. Module-to-module
@@ -263,6 +262,8 @@ python3 op13/build_multipart.py \
   --output /home/palaziks/hmosnext5_op13/out/hmos5-op13-dsu-multipart-new \
   --vendor-additions /home/palaziks/hmosnext5_op13/out/op13-vendor-additions-new \
   --dlkm-audit /home/palaziks/hmosnext5_op13/out/module-audit-new/display-report.json \
+  --ipc-module /home/palaziks/hmosnext5_op13/work/stock-ipc-module/op13_hmos_ipc.runtime.ko \
+  --ipc-vm-report /home/palaziks/hmosnext5_op13/work/stock-ipc-vm-production/validation.json \
   --startup-dir /home/palaziks/hmosnext5_op13/out/op13-startup-new \
   --android-release 16 --android-sdk 36 --host-security-patch 2026-08-01
 python3 op13/verify_multipart.py \
@@ -312,19 +313,19 @@ Module inventory and init-mask helpers are included as `inspect_modules.py`,
 `check_module_crcs.py` and `list_init_masks.py`. They use the workspace containing
 this checkout and the extracted private inputs described above.
 
-To update the earlier validated seven-part candidate without repacking its
-unchanged vendor/auxiliary images, use `extend_with_dlkm.py --workspace WORKSPACE
---base BASE_DIRECTORY --output NEW_EMPTY_DIRECTORY --dlkm-audit REPORT_JSON`,
-then run `verify_multipart.py` on the new output. The helper reuses unchanged
-images by hardlink and rebuilds only system plus the two new signed output copies.
-The original input images and their module bytes remain untouched.
+To update a validated candidate, use `extend_with_dlkm.py --workspace WORKSPACE
+--base BASE_DIRECTORY --output NEW_EMPTY_DIRECTORY --dlkm-audit REPORT_JSON
+--ipc-module VM_TESTED_RUNTIME_KO --ipc-vm-report VM_VALIDATION_JSON`, then run
+verify_multipart.py. The helper hardlinks six unchanged images, rebuilds system
+and adds the module to a copy of stock vendor_dlkm. The original inputs remain
+untouched. Both builders require a passing VM report matching the runtime
+module, stock boot and production bootstrap source. See ipc/README.md.
 
-For a configuration-only update of an already validated eight-part candidate,
-`extend_with_dlkm.py` also accepts an eight-part base and `--startup-dir NEW_TREE`.
-It preserves the unchanged vendor/auxiliary/DLKM images and replaces only the
-system image. `check_input_backend.sh` tests the real donor ARM64 input backend
-in an isolated empty-device namespace. The missing legacy HDF-host entry is
-removed rather than replaced with a fake driver or a successful-IOCTL stub.
+`--replace-base-package` removes only the hash-verified generated base ZIP,
+after replacement filesystem/AVB checks and before writing its replacement,
+when disk space is limited. The generated raw images remain available until
+the replacement package completes. Retain build records, not duplicate images.
+`--startup-dir NEW_TREE` can also replace the curated startup configuration.
 
 When the stock firmware changes, use the full builder to rebuild vendor too.
 The extender rejects an updated payload audit if its stock vendor differs

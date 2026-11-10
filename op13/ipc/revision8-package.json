@@ -1,0 +1,80 @@
+{
+  "revision": 8,
+  "phone_boot_tested": false,
+  "kernel_image_modified": false,
+  "vendor_boot_modified": false,
+  "additional_kernel_module": "vendor_dlkm:/lib/modules/op13_hmos_ipc.ko",
+  "zip": {
+    "file": "hmos5-op13-dsu.zip",
+    "bytes": 6291971993,
+    "sha256": "9245fd84d842252d5c29f85c3f75981b733d36be40825b73defc5d1c05cd3681"
+  },
+  "changed_partitions_from_revision7": [
+    "system",
+    "vendor_dlkm"
+  ],
+  "offline_component_checks": 24,
+  "packed_validation": {
+    "passed": true,
+    "original_input_images_unchanged": 14,
+    "partition_payload_checks": {
+      "sys_prod": {
+        "original_filesystem_bytes_verified": 1824694272,
+        "filesystem": "erofs",
+        "superblock_changed_by_incremental_build": false
+      },
+      "chip_prod": {
+        "original_filesystem_bytes_verified": 570167296,
+        "filesystem": "erofs",
+        "superblock_changed_by_incremental_build": false
+      },
+      "cust": {
+        "original_filesystem_bytes_verified": 6070272,
+        "filesystem": "erofs",
+        "superblock_changed_by_incremental_build": false
+      },
+      "patch_hw": {
+        "original_filesystem_bytes_verified": 4096,
+        "filesystem": "erofs",
+        "superblock_changed_by_incremental_build": false
+      },
+      "vendor_dlkm": {
+        "passed": true,
+        "stock_inode_metadata_entries_preserved": 473,
+        "stock_file_contents_or_symlinks_preserved": 468,
+        "added_path": "/lib/modules/op13_hmos_ipc.ko",
+        "module_sha256": "8fd408384b0accd695ebe9069be5f39b05cbe2620c68482c8c29b1680d7602e8",
+        "original_stock_modules_modified": false
+      },
+      "system_dlkm": {
+        "original_filesystem_bytes_verified": 11964416,
+        "filesystem": "erofs",
+        "superblock_changed_by_incremental_build": false
+      }
+    },
+    "system_mode_label_checks": 8,
+    "stock_vendor_metadata_entries_checked": 3881,
+    "native_vendor_addition_checks": 145,
+    "op13_vendor_file_contents_or_symlinks_preserved": 3713,
+    "unmodified_system_file_contents_or_symlinks_preserved": 6364,
+    "patched_system_file_contents_or_symlinks_checked": 325,
+    "dlkm_input_images_unchanged": 2,
+    "zip_exactly_eight_partition_images": true,
+    "odm_image_omitted": true,
+    "readback_trees_sequential": true,
+    "scope": "Offline block retention, file metadata, hashes and archive membership; no device boot or ARB acceptance test"
+  },
+  "stock_kernel_vm": {
+    "passed": true,
+    "stock_boot_sha256": "ac26f34d76d4af5d8aa4b58df3f5abbb9d1921c551b4be1ddc5b3a17ba6afedd",
+    "stock_kernel_sha256": "0b4b3aadd775009d88f39d0738ee7fa1a8a053444f668c2a762d0ea31f86e6a5",
+    "kernel_release": "6.6.118-android15-8-g93e223c276e7-abogki500782043-4k",
+    "module_sha256": "8fd408384b0accd695ebe9069be5f39b05cbe2620c68482c8c29b1680d7602e8",
+    "bootstrap_source_sha256": "d12ed6fabde906178322fc82733ea0cff542d49d3340cb765da2702614bbd240",
+    "module_load_flags": 0,
+    "production_ipc_aliases_exercised": true,
+    "kernel_image_modified": false,
+    "physical_phone_tested": false,
+    "scope": "Real stock kernel and module in diskless/networkless QEMU; token, nested Binder and production alias tests"
+  }
+}

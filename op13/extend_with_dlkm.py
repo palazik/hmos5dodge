@@ -11,6 +11,7 @@ import subprocess
 from build_multipart import command, digest, metadata, patch_image, sign_image, write_package
 from prepare_dlkm import load_report, write_load_plan
 from selinux_config import write_config
+from ipc.package_module import attach as attach_ipc, patch as patch_ipc
 
 
 def main():
@@ -19,6 +20,10 @@ def main():
     parser.add_argument('--base', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--dlkm-audit', type=Path, required=True)
+    parser.add_argument('--ipc-module', type=Path, required=True)
+    parser.add_argument('--ipc-vm-report', type=Path, required=True)
+    parser.add_argument('--replace-base-package', action='store_true',
+                        help='remove the verified generated base ZIP after replacement image checks to save space')
     parser.add_argument('--startup-dir', type=Path, help='optional regenerated native startup tree')
     args = parser.parse_args()
     root, base, output = args.workspace.resolve(), args.base.resolve(), args.output.resolve()
@@ -43,6 +48,7 @@ def main():
         if digest(root / source) != expected:
             raise RuntimeError('component changed after validation: ' + source)
     dlkm = load_report(root, args.dlkm_audit)
+    attach_ipc(root, dlkm, args.ipc_module, args.ipc_vm_report)
     if 'vendor_base_sha256' in dlkm:
         base_vendor = report.get('input_images', {}).get('op13_stock/vendor.img', {}).get('sha256')
         if base_vendor != dlkm['vendor_base_sha256']:
@@ -90,6 +96,11 @@ def main():
         records[name] = report['partitions'][name]
     for name, row in dlkm['images'].items():
         target = output / (name + '.img')
+        if name == 'vendor_dlkm':
+            dlkm['ipc_module']['packed_validation'] = patch_ipc(Path(row['source']), target, dlkm['ipc_module'])
+            images[name] = target
+            records[name] = sign_image(target, name, key, compatibility)
+            continue
         if name in report['partitions'] and report.get('dlkm_inputs', {}).get(name, {}).get('sha256') == row['sha256']:
             os.link(base / (name + '.img'), target)
             images[name] = target
@@ -101,6 +112,14 @@ def main():
         images[name] = target
         records[name] = sign_image(target, name, key, compatibility)
     shutil.copyfile(base / 'vendor-base-content.json', output / 'vendor-base-content.json')
+    if args.replace_base_package:
+        previous = base / report['zip']['file']
+        if (base.parent != root / 'out' or not base.name.startswith('hmos5-op13-dsu') or
+                previous.parent != base or previous.is_symlink() or
+                digest(previous) != report['zip']['sha256']):
+            raise RuntimeError('refusing removal of an unverified base package')
+        previous.unlink()
+        print('Removed superseded generated ZIP after replacement filesystem/AVB checks', flush=True)
     print('Writing updated eight-part DSU ZIP', flush=True)
     package = write_package(output, images)
     updated = copy.deepcopy(report)
@@ -112,7 +131,9 @@ def main():
     updated.update({'partitions': records, 'zip': package, 'component_validation': components, 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 7, 'selinux_mode_changed': False,
+        'handoff_revision': 8, 'selinux_mode_changed': False,
+        'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
+        'additional_kernel_module': True,
         'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',
         'native_mount_root': 'pivot_root in a private mount namespace; old root detached',
         'native_selinux_config': 'Preserve boot-selected permissive mode through the native config; explicit native enforcing=1 takes precedence',

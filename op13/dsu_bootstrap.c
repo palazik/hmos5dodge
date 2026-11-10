@@ -296,7 +296,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 7; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 8; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -596,7 +596,7 @@ static void load_stock_modules(void)
         close(fd);
         errno = saved;
         if (result && errno != EEXIST) fatal(name);
-        log_line("loaded stock module %s", name);
+        log_line("loaded planned module %s", name);
     }
     fclose(list);
 }
@@ -663,38 +663,44 @@ static void copy_device(const char *suffix, bool required)
     devices[device_count++] = (struct device){major(st.st_rdev), minor(st.st_rdev)};
 }
 
+static void ipc_node(const char *name, const char *alias, uid_t uid, gid_t gid)
+{
+    char sysfile[256], target[512], suffix[256];
+    snprintf(sysfile, sizeof(sysfile), "/sys/class/misc/%s/dev", name);
+    unsigned maj, min;
+    if (!device_numbers(sysfile, &maj, &min) || maj != 10 || device_count == 128) {
+        errno = ENODEV; fatal("Harmony IPC misc device identity");
+    }
+    snprintf(suffix, sizeof(suffix), "/dev/%s", alias);
+    rootpath(target, sizeof(target), suffix);
+    if (mknod(target, S_IFCHR | 0666, makedev(maj, min)) ||
+        chown(target, uid, gid) || chmod(target, 0666)) fatal("Harmony IPC device creation");
+    devices[device_count++] = (struct device){maj, min};
+    log_line("native IPC alias %s uses %s (%u:%u)", alias, name, maj, min);
+}
+
 static void binder_namespace(void)
 {
-    root_directory("/dev/hmos-binderfs", 0700);
-    root_mount("binder", "/dev/hmos-binderfs", "binder", MS_NOSUID | MS_NOEXEC, NULL);
-    char control_path[512];
-    rootpath(control_path, sizeof(control_path), "/dev/hmos-binderfs/binder-control");
-    int control = open(control_path, O_RDWR | O_CLOEXEC);
-    if (control < 0) fatal("private BinderFS control");
-    const char *names[] = {"binder", "hwbinder", "vndbinder"};
-    for (size_t i = 0; i < 3; ++i) {
-        struct binder_device_request request = {0};
-        snprintf(request.name, sizeof(request.name), "hmos-%s", names[i]);
-        if (ioctl(control, BINDER_DEVICE_ADD, &request)) fatal("private BinderFS device");
-        char source[512], suffix[256], alias[512];
-        snprintf(suffix, sizeof(suffix), "/dev/hmos-binderfs/%s", request.name);
-        rootpath(source, sizeof(source), suffix);
-        snprintf(suffix, sizeof(suffix), "/dev/%s", names[i]);
-        rootpath(alias, sizeof(alias), suffix);
-        if (chmod(source, 0666)) fatal("BinderFS permissions");
-        int placeholder = open(alias, O_CREAT | O_EXCL | O_WRONLY | O_CLOEXEC, 0600);
-        if (placeholder < 0) fatal(alias);
-        close(placeholder);
-        // A plain mknod of a BinderFS major/minor loses inode-private driver
-        // data. Bind the actual BinderFS inode instead.
-        bind_path(source, alias, false);
-        if (device_count == 128) { errno = ENOSPC; fatal("device allowlist"); }
-        devices[device_count++] = (struct device){request.major, request.minor};
-    }
-    close(control);
-    // Guest applications only see the three native aliases. Keep control
-    // inaccessible; the alias bind mounts hold their real BinderFS inodes.
-    root_mount("tmpfs", "/dev/hmos-binderfs", "tmpfs", MS_RDONLY | MS_NOSUID | MS_NODEV | MS_NOEXEC, "mode=0000");
+    // These misc endpoints belong to the additional Harmony transport. Stock
+    // Android Binder and its BinderFS instances remain separate.
+    if (access("/sys/module/op13_hmos_ipc", F_OK)) fatal("Harmony IPC module required");
+    ipc_node("hmos_binder", "binder", 0, 0);
+    ipc_node("hmos_hwbinder", "hwbinder", 0, 0);
+    ipc_node("hmos_vndbinder", "vndbinder", 0, 0);
+    ipc_node("access_token_id", "access_token_id", 3020, 3020);
+    char path[512];
+    rootpath(path, sizeof(path), "/dev/binder");
+    int fd = open(path, O_RDWR | O_CLOEXEC);
+    uint64_t features = 0;
+    if (fd < 0 || ioctl(fd, _IOWR('b', 30, uint64_t), &features) || !(features & 1))
+        fatal("Harmony Binder access-token feature check");
+    close(fd);
+    rootpath(path, sizeof(path), "/dev/access_token_id");
+    fd = open(path, O_RDWR | O_CLOEXEC);
+    uint64_t token;
+    if (fd < 0 || ioctl(fd, _IOR('A', 1, uint64_t), &token)) fatal("native task-token API check");
+    close(fd);
+    log_line("native Harmony Binder and task-token APIs verified; four isolated misc aliases ready");
 }
 
 static void device_namespace(void)
@@ -922,7 +928,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 7; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 8; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
