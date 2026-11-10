@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 import re
 import subprocess
+import tempfile
+from hdf_hosts import install as install_hdf_hosts
 
 BLOCKED_SERVICES = {'ueventd', 'watchdog_service', 'updater', 'updater_sa',
                     'update_service', 'kdump_resize', 'iSulad'}
@@ -49,6 +51,8 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--hdf-source', type=Path, required=True)
     parser.add_argument('--hc-gen', type=Path, required=True)
+    parser.add_argument('--chip-prod-image', type=Path, required=True,
+                        help='donor chip_prod containing complete HDF init service definitions')
     args = parser.parse_args()
     output = args.output.resolve()
     if output.exists() and any(output.iterdir()):
@@ -138,6 +142,7 @@ def main():
                 blocks.append((name, text[start:token.end()]))
         previous = token
     selected = []
+    ordered_hosts = []
     # The donor input proxy is passthrough and its implementation links the
     # Linux /dev/input userspace backend. Its old input_user_host references
     # libinput_driver.z.so, which is absent and unused by that path.
@@ -152,12 +157,20 @@ def main():
             if match.group(1) == 'power_host':
                 block = re.sub(r'\s*(thermal_device|thermal_daemon_device)\s*\{.*?\n\s{12}\}', '', block, flags=re.S)
             selected.append(block)
+            ordered_hosts.append(match.group(1))
     if len(selected) != len(hosts):
         raise ValueError('expected native display/auth and power/battery hosts')
     hcs = 'root {\n module = "default";\n device_info {\n match_attr = "hdf_manager";\n' + '\n'.join(selected) + '\n }\n}\n'
     (output / 'hdf-op13.hcs').write_text(hcs)
     subprocess.run([str(args.hc_gen.resolve()), '-b', '-o', str(output / 'hdf_default.hcb'),
                     str(output / 'hdf-op13.hcs')], check=True)
+    with tempfile.TemporaryDirectory(prefix='op13-hdf-init-') as temporary:
+        config = Path(temporary) / 'hdf_devhost.cfg'
+        subprocess.run(['fsck.erofs', '--extract=' + str(config), '--path=/etc/init/hdf_devhost.cfg',
+            '--no-preserve-owner', '--preserve-perms', str(args.chip_prod_image.resolve())], check=True)
+        raw = config.read_bytes()
+        report['hdf_init_source_sha256'] = hashlib.sha256(raw).hexdigest()
+        install_hdf_hosts(output, json.loads(raw), ordered_hosts, report)
     report['hdf_hosts'] = sorted(hosts)
     report['input_backend'] = 'Existing Linux libinput/MMI and HDI passthrough udriver; no input HDF host'
     report['excluded_stale_hdf_hosts'] = ['input_user_host']

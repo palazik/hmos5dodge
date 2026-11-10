@@ -38,6 +38,7 @@ flags=(-std=c++17 -O2 -fPIC -Wno-unknown-warning-option -Wno-format -Wno-depreca
 for include in "${includes[@]}"; do flags+=("-I$include"); done
 cxx="$repo/build/ohos-clang++"
 "$cxx" "${flags[@]}" -shared "$source_dir/buffer/sweet_buffer_vdi.cpp" \
+ "$source_dir/buffer/huawei_private_metadata.cpp" \
  -Wl,-soname,libdisplay_buffer_vdi_impl.z.so -Wl,--no-undefined \
  -ldrm -lhilog -lc++ -lc -o "$output/libdisplay_buffer_vdi_impl.z.so"
 objects=()
@@ -55,3 +56,5 @@ file "$output"/*.so
  "$repo/op13/display_mode_test.cpp" -L"$output" -ldisplay_composer_vdi_impl.z \
  -ldisplay_buffer_vdi_impl.z -ldrm -lhilog -lhdf_utils.z -lsec_shared.z \
  -lhitrace_meter -lutils.z -lc++ -lc -o "$output/display-mode-test"
+"$cxx" -std=c++17 -O2 "$repo/op13/display_gralloc_test.cpp" \
+ -ldl -lc++ -lc -o "$output/display-gralloc-test"

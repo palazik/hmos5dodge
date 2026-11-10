@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Verify packed OP13 partition contents, permissions and unchanged input bytes."""
 import argparse
+from hdf_hosts import validate as validate_hdf_hosts
 import json
 import os
 from pathlib import Path
@@ -149,6 +150,8 @@ def main():
             (root / 'work/inspect/vendor/etc/param/hdf_devmgr.para.dac').read_bytes())
         assert sys_owners['system/etc/param/hdf_devmgr.para.dac'][:3] == ['0', '0', '0644']
         assert sys_labels['system/etc/param/hdf_devmgr.para.dac'] == 'u:object_r:system_etc_file:s0'
+    if report.get('handoff_revision', 0) >= 10:
+        validate_hdf_hosts(after / 'hmos/startup', report['startup_configuration'])
     assert (after / 'system/lib/modules').is_symlink()
     assert str((after / 'system/lib/modules').readlink()) == '/system_dlkm/lib/modules'
     lines = (after / 'hmos/modules/load-order').read_text().splitlines()

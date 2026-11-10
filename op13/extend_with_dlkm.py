@@ -13,6 +13,7 @@ from prepare_dlkm import load_report, write_load_plan
 from selinux_config import write_config
 from ipc.package_module import attach as attach_ipc, patch as patch_ipc
 from param_config import write_config as write_param_config
+from hdf_hosts import validate as validate_hdf_hosts
 
 
 def main():
@@ -68,6 +69,11 @@ def main():
         shutil.copytree(args.startup_dir, stage / 'hmos/startup', symlinks=True)
         shutil.copyfile(args.startup_dir / 'mask-init-dirs', stage / 'hmos/mask-init-dirs')
     shutil.copyfile(root / 'out/op13-bootstrap/init', stage / 'system/bin/init')
+    # Refresh the validated runtime overlays as well as PID 1.  Reusing the old
+    # stage otherwise silently packages old HALs after a display-only rebuild.
+    for library in ('libdisplay_buffer_vdi_impl.z.so', 'libdisplay_composer_vdi_impl.z.so'):
+        shutil.copyfile(root / 'out/op13-display' / library, stage / 'hmos/display' / library)
+    validate_hdf_hosts(stage / 'hmos/startup', startup or report['startup_configuration'])
     write_load_plan(root, stage, dlkm)
     (stage / 'system/lib').mkdir(exist_ok=True)
     link = stage / 'system/lib/modules'
@@ -147,7 +153,7 @@ def main():
     updated.update({'partitions': records, 'zip': package, 'component_validation': components, 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 9, 'selinux_mode_changed': False,
+        'handoff_revision': 10, 'selinux_mode_changed': False,
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,
         'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',

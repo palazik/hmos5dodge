@@ -1,5 +1,5 @@
 /*
- * Display buffer VDI for HarmonyOS on Redmi Note 10 Pro (sweet, SM7150).
+ * Display buffer VDI for HarmonyOS on OnePlus 13, adapted from sweet.
  *
  * Allocates graphics buffers as DRM "dumb" buffers on the msm DRM device
  * (/dev/dri/card0) and hands them out as dma-buf fds inside a BufferHandle.

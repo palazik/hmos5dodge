@@ -1,0 +1,76 @@
+{
+  "handoff_revision": 10,
+  "phone_boot_tested": false,
+  "full_framework_boot_succeeded": false,
+  "package": {
+    "file": "hmos5-op13-dsu.zip",
+    "bytes": 6307616404,
+    "sha256": "7a2ba8022e00fd65a04bf0c7f1e28d5067717879b5067874abb2268137773ab3"
+  },
+  "partition_sha256": {
+    "system": "51b7de5a963a6a8c86726faa2afaef03418e0b6fdd8eda27902c5312156e5d84",
+    "vendor": "a293d77ada220a0db88316698662f0646eefe1cffa97e385b8e8df78881417ac",
+    "sys_prod": "666207539392d9cdc16a66c3a36944477fcf41f03a4da2d98ac79852c8764d50",
+    "chip_prod": "83e766cae5197651ef669add34d0b9684abc9714c687a36c180445f512d2f970",
+    "cust": "d1425b16578ade81a340e40520d5d86eff333d249990be2f383d9700d90e7c61",
+    "patch_hw": "8ee0b81fff44745153e156bca1363c02b6e2d80069baf0f74a57c4c425965c22",
+    "vendor_dlkm": "ffe547d84c5322d8e667ca6f0ee88268d0084cf250863b902ef9b06224f0af3e",
+    "system_dlkm": "480953875d6e5a6b2741ae720fb851b8501087af728ddcae742eee9cc4d2ac4e"
+  },
+  "changed_images_since_revision9": [
+    "system.img"
+  ],
+  "component_checks_passed": 27,
+  "packed_validation": {
+    "passed": true,
+    "original_input_images_unchanged": 14,
+    "partition_payload_checks": {
+      "sys_prod": {
+        "original_filesystem_bytes_verified": 1824694272,
+        "filesystem": "erofs",
+        "superblock_changed_by_incremental_build": false
+      },
+      "chip_prod": {
+        "original_filesystem_bytes_verified": 570167296,
+        "filesystem": "erofs",
+        "superblock_changed_by_incremental_build": false
+      },
+      "cust": {
+        "original_filesystem_bytes_verified": 6070272,
+        "filesystem": "erofs",
+        "superblock_changed_by_incremental_build": false
+      },
+      "patch_hw": {
+        "original_filesystem_bytes_verified": 4096,
+        "filesystem": "erofs",
+        "superblock_changed_by_incremental_build": false
+      },
+      "vendor_dlkm": {
+        "passed": true,
+        "stock_inode_metadata_entries_preserved": 473,
+        "stock_file_contents_or_symlinks_preserved": 468,
+        "added_path": "/lib/modules/op13_hmos_ipc.ko",
+        "module_sha256": "8fd408384b0accd695ebe9069be5f39b05cbe2620c68482c8c29b1680d7602e8",
+        "original_stock_modules_modified": false
+      },
+      "system_dlkm": {
+        "original_filesystem_bytes_verified": 11964416,
+        "filesystem": "erofs",
+        "superblock_changed_by_incremental_build": false
+      }
+    },
+    "system_mode_label_checks": 8,
+    "stock_vendor_metadata_entries_checked": 3881,
+    "native_vendor_addition_checks": 145,
+    "op13_vendor_file_contents_or_symlinks_preserved": 3713,
+    "unmodified_system_file_contents_or_symlinks_preserved": 6364,
+    "patched_system_file_contents_or_symlinks_checked": 327,
+    "dlkm_input_images_unchanged": 2,
+    "zip_exactly_eight_partition_images": true,
+    "odm_image_omitted": true,
+    "readback_trees_sequential": true,
+    "scope": "Offline block retention, file metadata, hashes and archive membership; no device boot or ARB acceptance test"
+  },
+  "stock_kernel_vm_passed": true,
+  "scope": "Offline candidate validation. No successful HarmonyOS frame or full phone boot established."
+}

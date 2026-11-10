@@ -9,17 +9,16 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 
 ## Status
 
-**Revision 8's IPC module works on OP13; the phone still shows its static OnePlus logo.**
+**Revision 9 still shows the static OnePlus logo. Revision 10 repairs missing display-host startup definitions.**
 
-The new phone logs show native Binder/token checks passing, successful service
-registrations and render/app-framework readiness events. No HarmonyOS frame
-or boot animation is established. User storage startup then fails while making
-virtual directories, and HDF's ready-event parameter write is denied.
-Revision 9 adds the missing guest mountpoint parent, restores the donor's exact
-HDF parameter permission entry in the loaded system path, and captures bounded
-HiLog warnings/errors plus UI/HDF process state. See the
-[attempt-8 diagnosis](op13/ATTEMPT8.md) and [test instructions](op13/TESTING.md).
-Only system.img changes from revision 8. The stock kernel Image, vendor_boot,
+Native Binder/token checks pass; the previous storage and HDF parameter errors
+are absent. The selected device graph lacked complete init definitions for
+composer/allocator hosts. Revision 10 restores the five selected donor host
+services with matching HCB IDs, removes a malformed duplicate pin-auth entry,
+and fixes a donor gralloc relocation failure with explicit unsupported responses
+for Huawei private metadata. See the [attempt-9 diagnosis](op13/ATTEMPT9.md) and
+[test instructions](op13/TESTING.md). A first HarmonyOS frame remains unproven.
+Only system.img changes from revision 9. The stock kernel Image, vendor_boot,
 working IPC module, all seven other images, native policy binaries and
 [userdata allocation logic](op13/DSU-DATA-INITIALIZATION.md) remain unchanged.
 Full framework boot on the phone remains unresolved.

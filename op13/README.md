@@ -2,17 +2,17 @@
 
 This is an **OP13-specific port**, using DSU as its installation and boot
 mechanism. It targets the full supplied HMOS5 framework, SceneBoard and
-SuperLauncher. The owner tested revision 8: the IPC module loads and the
+SuperLauncher. The owner tested revision 9: the IPC module loads and the
 native API checks pass, but the static OnePlus boot logo remains. Native
 service registrations, render readiness and app-framework readiness now occur;
 these events do not prove a displayed frame or the HarmonyOS boot animation.
 
-Revision 9 addresses two observed startup problems: the missing /mnt/data
-parent for storage's virtual directories, and the unloaded donor HDF ready-event
-permission rule. It adds bounded read-only HiLog queries and UI/HDF process
-snapshots to the existing native log. Only system.img changes from revision 8;
+The previous storage and HDF parameter errors are absent in revision 9.
+Revision 10 restores omitted HDF host init definitions from chip_prod, matches
+their IDs to the selected HCB graph, and resolves private-gralloc imports with
+explicit unsupported responses for Huawei private metadata. Only system.img changes from revision 9;
 the kernel Image, vendor_boot, working IPC module and userdata allocation logic
-remain unchanged. Read [ATTEMPT8.md](ATTEMPT8.md), [IPC details](ipc/README.md)
+remain unchanged. Read [ATTEMPT9.md](ATTEMPT9.md), [IPC details](ipc/README.md)
 and [test instructions](TESTING.md). Full phone boot remains unverified.
 
 The local package is:
@@ -234,14 +234,16 @@ From `/home/palaziks/hmosnext5_op13/hmos5dodge`, using new empty output director
 
 ```sh
 bash op13/build_display.sh
-python3 op13/validate_components.py
 python3 op13/prepare_startup.py \
   --audit /home/palaziks/hmosnext5_op13/out/stock-dsu-audit \
   --output /home/palaziks/hmosnext5_op13/out/op13-startup-new \
   --hdf-source /home/palaziks/hmosnext5_op13/work/hdf-default.d.hcs \
+  --chip-prod-image /home/palaziks/hmosnext5_op13/hmos5/chip_prod.img \
   --hc-gen build/work/openharmony/hdf_core/framework/tools/hc-gen/build/hc-gen
 cp /home/palaziks/hmosnext5_op13/out/op13-startup/mask-init-dirs \
   /home/palaziks/hmosnext5_op13/out/op13-startup-new/mask-init-dirs
+python3 op13/validate_components.py \
+  --startup-dir /home/palaziks/hmosnext5_op13/out/op13-startup-new
 python3 op13/prepare_vendor.py \
   --workspace /home/palaziks/hmosnext5_op13 \
   --output /home/palaziks/hmosnext5_op13/out/op13-vendor-additions-new \

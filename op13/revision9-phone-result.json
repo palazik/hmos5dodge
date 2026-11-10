@@ -1,0 +1,25 @@
+{
+  "revision": 9,
+  "phone_boot_tested": true,
+  "full_framework_boot_succeeded": false,
+  "visible_screen": "static OnePlus boot logo; no HarmonyOS frame observed",
+  "connected_device_operations": "read-only capture complete; device released",
+  "native_binder_and_token_checks_passed": true,
+  "previous_token_setting_and_service_registration_denials_seen": false,
+  "previous_storage_start_user_failure_seen": false,
+  "previous_hdf_ready_parameter_write_denial_seen": false,
+  "hdf_composer_allocator_processes_seen_in_snapshots": false,
+  "hdf_host_init_definitions_missing": true,
+  "private_gralloc_relocation_error_process": "processdump",
+  "hilog_queries_completed": 7,
+  "bootstrap_log": {
+    "lines": 595,
+    "bytes": 25725,
+    "sha256": "e3bbd7a0060fe60a31bb0e0b302f448f57da4c2df396a174cfdd6f5bf02415dc"
+  },
+  "native_log": {
+    "lines": 29688,
+    "bytes": 2437501,
+    "sha256": "a24da6007b80e1a427ab4a4afa535e134f6856a7371b60dc52bb0682924ad09a"
+  }
+}

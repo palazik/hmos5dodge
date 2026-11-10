@@ -12,6 +12,7 @@ import zipfile
 from image_utils import check_filesystem
 from selinux_config import write_config
 from param_config import write_config as write_param_config
+from hdf_hosts import validate as validate_hdf_hosts
 
 
 def digest(path):
@@ -172,6 +173,7 @@ def main():
     shutil.copy2(workspace / 'out/op13-bootstrap/init', stage / 'system/bin/init')
     shutil.copyfile(workspace / 'out/stock-dsu-audit/donor-init', stage / 'system/bin/hmos-native-init')
     shutil.copytree(startup_dir, stage / 'hmos/startup', symlinks=True)
+    validate_hdf_hosts(stage / 'hmos/startup', json.loads((startup_dir / 'manifest.json').read_text()))
     shutil.copyfile(startup_dir / 'mask-init-dirs', stage / 'hmos/mask-init-dirs')
     shutil.copytree(workspace / 'out/op13-ui', stage / 'hmos/ui')
     for name in ('libdisplay_buffer_vdi_impl.z.so', 'libdisplay_composer_vdi_impl.z.so'):
@@ -262,7 +264,7 @@ def main():
     report = {'status': 'experimental-op13-only-multipart-dsu', 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 9, 'selinux_mode_changed': False,
+        'handoff_revision': 10, 'selinux_mode_changed': False,
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,
         'bootstrap_metadata_log': '/metadata/hmos5dodge/bootstrap.log',

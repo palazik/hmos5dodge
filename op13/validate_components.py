@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: Apache-2.0
 """Build and exercise the offline DSU components without connecting a phone."""
 import hashlib
+import argparse
 import json
 import os
 from pathlib import Path
 import subprocess
 from selinux_config import permissive_config
+from hdf_hosts import validate as validate_hdf_hosts
 
 REPO = Path(__file__).resolve().parents[1]
 WORKSPACE = REPO.parent
@@ -25,6 +27,10 @@ def run(name, command, env=None, expected=0):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--startup-dir', type=Path, default=WORKSPACE / 'out/op13-startup')
+    args = parser.parse_args()
+    startup = args.startup_dir.resolve()
     OUTPUT.mkdir(parents=True, exist_ok=True)
     bootstrap = WORKSPACE / 'out/op13-bootstrap'
     storage = WORKSPACE / 'out/op13-storage'
@@ -112,6 +118,21 @@ def main():
         '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp', qemu,
         '-L', SYSROOT, '-E', 'LD_LIBRARY_PATH=' + str(display) + ':' + str(SYSROOT / 'usr/lib'),
         display / 'display-mode-test']))
+    tests.append(run('arm64-donor-gralloc-relocation-and-rejection', ['bwrap', '--die-with-parent', '--unshare-all',
+        '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp', qemu,
+        '-L', SYSROOT, '-E', 'LD_LIBRARY_PATH=' + str(display) + ':' +
+        str(WORKSPACE / 'work/inspect/vendor-lib64') + ':' + str(SYSROOT / 'usr/lib'),
+        display / 'display-gralloc-test']))
+    tests.append(run('hdf-native-parser-test-build', ['bash', 'build/ohos-clang', '-std=c11', '-O2',
+        '-Ibuild/work/openharmony/hdf_core/interfaces/inner_api/utils',
+        '-Ibuild/work/openharmony/hdf_core/interfaces/inner_api/osal/uhdf',
+        'op13/hdf_graph_test.c', '-lhdf_utils.z', '-lhilog', '-lsec_shared.z', '-lc',
+        '-o', display / 'hdf-graph-test'], env=environment))
+    hosts = validate_hdf_hosts(startup, json.loads((startup / 'manifest.json').read_text()))
+    tests.append(run('arm64-donor-hdf-graph-host-ids', ['bwrap', '--die-with-parent', '--unshare-all',
+        '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp', qemu,
+        '-L', SYSROOT, '-E', 'LD_LIBRARY_PATH=' + str(SYSROOT / 'usr/lib'),
+        display / 'hdf-graph-test', startup / 'hdf_default.hcb', *[s['name'] for s in hosts]]))
     tests.append(run('arm64-input-backend-without-hdf', ['bash', 'op13/check_input_backend.sh']))
     for prefix in ('', 'developer-'):
         policy = WORKSPACE / 'out/op13-policy'
@@ -141,6 +162,7 @@ def main():
     artifacts = [bootstrap / 'init', storage / 'libop13_local_storage.so',
         display / 'libdisplay_buffer_vdi_impl.z.so', display / 'libdisplay_composer_vdi_impl.z.so',
         WORKSPACE / 'out/op13-policy/policy.31', WORKSPACE / 'out/op13-policy/developer_policy']
+    artifacts.extend(p for p in startup.rglob('*') if p.is_file() and not p.is_symlink())
     record = {'passed': True, 'tests': tests,
               'artifact_sha256': {str(p.relative_to(WORKSPACE)): hashlib.sha256(p.read_bytes()).hexdigest() for p in artifacts},
               'scope': 'Offline userspace/logic/format tests. No OP13 kernel boot, BPF attachment, native framework boot or hardware rendering tested.'}
