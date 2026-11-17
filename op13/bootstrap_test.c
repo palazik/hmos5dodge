@@ -164,7 +164,7 @@ static void hilog_fixture(const char *mode, const char *binary, bool success, bo
     ssize_t count = pread(output, text, sizeof(text) - 1, 0);
     assert(count >= 0);
     if (success) assert(strstr(text, "HiLog fixture: clean descriptors"));
-    if (!strcmp(mode, "missing")) assert(strstr(text, "HiLog query exec failed: errno=2"));
+    if (!strcmp(mode, "missing")) assert(strstr(text, "diagnostic query 0 exec failed: errno=2") || strstr(text, "diagnostic query 1 exec failed: errno=2"));
     printf("PASS HiLog query fixture %s: bounded output, child reaped, no descriptor inheritance\n", mode);
     close(output);
 }
@@ -228,7 +228,7 @@ int main(int argc, char **argv)
         else
             assert(!strcmp(argv[2], "I,W,E,F") && !strcmp(argv[3], "-T") &&
                 !strcmp(argv[4], "DISP,OP13Gralloc,SweetHAL,MAPPER_SRV") &&
-                !strcmp(argv[5], "-z") && !strcmp(argv[6], "200"));
+                !strcmp(argv[5], "-z") && !strcmp(argv[6], "1000"));
         errno = 0;
         assert(fcntl(0, F_GETFD) == -1 && errno == EBADF);
         for (int fd = 3; fd < 256; ++fd) {

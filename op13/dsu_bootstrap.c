@@ -360,7 +360,24 @@ struct hilog_snapshot {
     size_t bytes;
 };
 
-static int start_hilog_snapshot(struct hilog_snapshot *snapshot, const char *binary, unsigned timeout_ms, bool graphics)
+/*
+ * Bounded diagnostic queries.  Kind 0/1 are HiLog snapshots; the rest ask
+ * running services for state through hidumper (RenderService SA 10 and
+ * DisplayManager SA 3203; IDs confirmed by revision 14 SAMGR DeadSA records).
+ * Most RenderService HiLog text is dictionary-encoded and unreadable here.
+ */
+enum { SNAPSHOT_HILOG_ERRORS, SNAPSHOT_HILOG_GRAPHICS, SNAPSHOT_SA_LIST, SNAPSHOT_RS_SCREEN,
+       SNAPSHOT_RS_SURFACE, SNAPSHOT_DMS, SNAPSHOT_KINDS };
+
+static const char *snapshot_title(unsigned kind)
+{
+    static const char *const titles[SNAPSHOT_KINDS] = {"HiLog warning/error", "HiLog graphics info/warning/error",
+        "hidumper registered system abilities", "hidumper RenderService screen",
+        "hidumper RenderService surface", "hidumper DisplayManager"};
+    return kind < SNAPSHOT_KINDS ? titles[kind] : "unknown";
+}
+
+static int start_hilog_snapshot(struct hilog_snapshot *snapshot, const char *binary, unsigned timeout_ms, unsigned kind)
 {
     if (snapshot->child) { errno = EBUSY; return -1; }
     int descriptors[2];
@@ -382,11 +399,21 @@ static int start_hilog_snapshot(struct hilog_snapshot *snapshot, const char *bin
         close(0);
         if (syscall(__NR_close_range, 3U, ~0U, 0)) _exit(126);
         // -z is already nonblocking; this donor rejects combining it with -x.
-        if (graphics)
-            execl(binary, "hilog", "-L", "I,W,E,F", "-T", "DISP,OP13Gralloc,SweetHAL,MAPPER_SRV", "-z", "200", NULL);
-        else
+        const char *dumper = "/system/bin/hidumper";
+        switch (kind) {
+        case SNAPSHOT_HILOG_GRAPHICS:
+            execl(binary, "hilog", "-L", "I,W,E,F", "-T", "DISP,OP13Gralloc,SweetHAL,MAPPER_SRV", "-z", "1000", NULL);
+            break;
+        case SNAPSHOT_HILOG_ERRORS:
             execl(binary, "hilog", "-L", "W,E,F", "-z", "2000", NULL);
-        dprintf(2, "HiLog query exec failed: errno=%d\n", errno);
+            break;
+        case SNAPSHOT_SA_LIST: execl(dumper, "hidumper", "-ls", NULL); break;
+        case SNAPSHOT_RS_SCREEN: execl(dumper, "hidumper", "-s", "10", "-a", "screen", NULL); break;
+        case SNAPSHOT_RS_SURFACE: execl(dumper, "hidumper", "-s", "10", "-a", "surface", NULL); break;
+        case SNAPSHOT_DMS: execl(dumper, "hidumper", "-s", "3203", "-a", "-a", NULL); break;
+        default: errno = EINVAL; break;
+        }
+        dprintf(2, "diagnostic query %u exec failed: errno=%d\n", kind, errno);
         _exit(127);
     }
     close(descriptors[1]);
@@ -448,17 +475,22 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 16; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 17; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
     if (start < 0) return;
     struct hilog_snapshot snapshot = {.input = -1};
-    const struct { unsigned ms; bool graphics; } snapshot_times[] = {
-        {10000, false}, {11000, true}, {15000, false}, {16000, true},
-        {25000, false}, {26000, true}, {45000, false}, {46000, true},
-        {90000, false}, {91000, true}, {150000, false}, {151000, true},
-        {175000, false}, {176000, true}};
+    const struct { unsigned ms; unsigned kind; } snapshot_times[] = {
+        {10000, SNAPSHOT_HILOG_ERRORS}, {11000, SNAPSHOT_HILOG_GRAPHICS},
+        {15000, SNAPSHOT_HILOG_ERRORS}, {16000, SNAPSHOT_HILOG_GRAPHICS},
+        {25000, SNAPSHOT_HILOG_ERRORS}, {26000, SNAPSHOT_HILOG_GRAPHICS},
+        {35000, SNAPSHOT_SA_LIST}, {36000, SNAPSHOT_RS_SCREEN}, {37000, SNAPSHOT_RS_SURFACE}, {38000, SNAPSHOT_DMS},
+        {45000, SNAPSHOT_HILOG_ERRORS}, {46000, SNAPSHOT_HILOG_GRAPHICS},
+        {90000, SNAPSHOT_HILOG_ERRORS}, {91000, SNAPSHOT_HILOG_GRAPHICS},
+        {100000, SNAPSHOT_RS_SCREEN}, {101000, SNAPSHOT_RS_SURFACE}, {102000, SNAPSHOT_DMS},
+        {150000, SNAPSHOT_HILOG_ERRORS}, {151000, SNAPSHOT_HILOG_GRAPHICS},
+        {175000, SNAPSHOT_HILOG_ERRORS}, {176000, SNAPSHOT_HILOG_GRAPHICS}};
     size_t next_snapshot = 0;
     struct pollfd inputs[] = {{kernel, POLLIN, 0}, {exec_pipe, POLLIN, 0}, {-1, POLLIN, 0}};
     while (used < limit) {
@@ -514,12 +546,11 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
         if (!snapshot.child && next_snapshot < sizeof(snapshot_times) / sizeof(snapshot_times[0]) &&
             now - start >= snapshot_times[next_snapshot].ms) {
             char title[160];
-            bool graphics = snapshot_times[next_snapshot].graphics;
-            snprintf(title, sizeof(title), "\n--- HiLog %s snapshot at %lld ms ---\n",
-                     graphics ? "graphics info/warning/error" : "warning/error", now - start);
+            unsigned kind = snapshot_times[next_snapshot].kind;
+            snprintf(title, sizeof(title), "\n--- %s snapshot at %lld ms ---\n", snapshot_title(kind), now - start);
             append_native_log(output, title, strlen(title), &used, limit);
-            if (start_hilog_snapshot(&snapshot, "/system/bin/hilog", 3000, graphics)) {
-                snprintf(title, sizeof(title), "HiLog query unavailable: errno=%d\n", errno);
+            if (start_hilog_snapshot(&snapshot, "/system/bin/hilog", kind >= SNAPSHOT_SA_LIST ? 5000 : 3000, kind)) {
+                snprintf(title, sizeof(title), "diagnostic query unavailable: errno=%d\n", errno);
                 append_native_log(output, title, strlen(title), &used, limit);
             }
             ++next_snapshot;
@@ -1181,7 +1212,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 16; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 17; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
