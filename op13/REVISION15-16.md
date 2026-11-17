@@ -39,3 +39,26 @@ The owner saw the OnePlus logo, then a dark screen.
 
 - A visible HarmonyOS animation, or at least `bootevent.bootanimation.started` and `.finished` about 60 s apart.
 - Whether the `libmetadata_service_1.1.z.so` errors are gone, and whether `render_service` still exits at around 50 s.
+
+## Correction: superseded by revision 16 before any phone test
+
+The OpenHarmony picture player stretches every frame into a centred square with side
+min(width, height) (v5.0.3 `boot_picture_player.cpp` `InitPicCoordinates`). The tall 1440x3168
+frames above would have been squashed into 1440x1440. Revision 15 was never flashed.
+
+# Revision 16: original boot video stream without the audio track
+
+- media_service and av_codec_service started in revision 14, but audio_server crash-looped
+  ("Cannot find service audio_host"; there is no OP13 audio HDI). That plausibly made the player fail
+  while preparing the AAC track, which matches started/finished being 0.3 ms apart.
+- `boot_animation.py` now remuxes the pinned donor `cust_bootvideo.mp4` with `-c copy -an`. The H.264
+  elementary stream is hash-checked as unchanged (same 1256x2760, 60 fps, full screen). Only the audio track
+  and container metadata are dropped. The donor-format config points `cust.bootanimation.video` at it.
+- Chosen by the owner over the original file (likely to fail until audio works) and a cropped square
+  picture sequence. Restore the original file once audio_server works.
+- The metadata HDI bridge from revision 15 is kept.
+- If the animation still ends instantly, the next suspect is H.264 decoding (no Huawei hardware decoder;
+  whether the av_codec software decoder is selected is unverified).
+- Images are built incrementally from the previous revision's EROFS image, which cannot delete files.
+  The unreferenced revision 15 `hmos_bootanim.zip` (11 MB) therefore remains in `/hmos/ui/bootanimation`.
+  The config does not reference it, and the verifier allows exactly that one leftover file.
