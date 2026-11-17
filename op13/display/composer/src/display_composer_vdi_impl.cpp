@@ -18,6 +18,18 @@
 #include "display_log.h"
 #include "hdf_log.h"
 
+/*
+ * Revision 17 call trace: RenderService HiLog is dictionary-encoded, so record
+ * how far it drives the composer.  First three calls of each entry at info
+ * level, then every 600th with a running count.
+ */
+#define VDI_TRACE(fmt, ...) do { \
+    static unsigned long vdiCalls; \
+    unsigned long vdiCall = ++vdiCalls; \
+    if (vdiCall <= 3 || vdiCall % 600 == 0) \
+        DISPLAY_LOGI("trace %{public}s #%{public}lu " fmt, __func__, vdiCall, ##__VA_ARGS__); \
+} while (0)
+
 namespace OHOS {
 namespace HDI {
 namespace DISPLAY {
@@ -31,12 +43,14 @@ DisplayComposerVdiImpl::~DisplayComposerVdiImpl()
 
 int32_t DisplayComposerVdiImpl::RegHotPlugCallback(HotPlugCallback cb, void* data)
 {
+    VDI_TRACE("");
     HdiSession::GetInstance().RegHotPlugCallback(cb, data);
     return HDF_SUCCESS;
 }
 
 int32_t DisplayComposerVdiImpl::GetDisplayCapability(uint32_t devId, DisplayCapability& info)
 {
+    VDI_TRACE("dev %{public}u", devId);
     int32_t ec = HdiSession::GetInstance().CallDisplayFunction(devId, &HdiDisplay::GetDisplayCapability, &info);
     DISPLAY_CHK_RETURN(ec != DISPLAY_SUCCESS, HDF_FAILURE, DISPLAY_LOGE("failed, ec=%{public}d", ec));
     return HDF_SUCCESS;
@@ -44,6 +58,7 @@ int32_t DisplayComposerVdiImpl::GetDisplayCapability(uint32_t devId, DisplayCapa
 
 int32_t DisplayComposerVdiImpl::GetDisplaySupportedModes(uint32_t devId, std::vector<DisplayModeInfo>& modes)
 {
+    VDI_TRACE("dev %{public}u", devId);
     DisplayModeInfo* placeHoler = nullptr;
     uint32_t num = 0;
     int32_t ec = HdiSession::GetInstance().CallDisplayFunction(devId, &HdiDisplay::GetDisplaySupportedModes,
@@ -63,6 +78,7 @@ int32_t DisplayComposerVdiImpl::GetDisplaySupportedModes(uint32_t devId, std::ve
 
 int32_t DisplayComposerVdiImpl::GetDisplayMode(uint32_t devId, uint32_t& modeId)
 {
+    VDI_TRACE("dev %{public}u", devId);
     int32_t ec = HdiSession::GetInstance().CallDisplayFunction(devId, &HdiDisplay::GetDisplayMode, &modeId);
     DISPLAY_CHK_RETURN(ec != DISPLAY_SUCCESS, HDF_FAILURE, DISPLAY_LOGE("failed, ec=%{public}d", ec));
     return HDF_SUCCESS;
@@ -70,6 +86,7 @@ int32_t DisplayComposerVdiImpl::GetDisplayMode(uint32_t devId, uint32_t& modeId)
 
 int32_t DisplayComposerVdiImpl::SetDisplayMode(uint32_t devId, uint32_t modeId)
 {
+    VDI_TRACE("dev %{public}u mode %{public}u", devId, modeId);
     int32_t ec = HdiSession::GetInstance().CallDisplayFunction(devId, &HdiDisplay::SetDisplayMode, modeId);
     DISPLAY_CHK_RETURN(ec != DISPLAY_SUCCESS, HDF_FAILURE, DISPLAY_LOGE("failed, ec=%{public}d", ec));
     return HDF_SUCCESS;
@@ -84,6 +101,7 @@ int32_t DisplayComposerVdiImpl::GetDisplayPowerStatus(uint32_t devId, V1_0::Disp
 
 int32_t DisplayComposerVdiImpl::SetDisplayPowerStatus(uint32_t devId, V1_0::DispPowerStatus status)
 {
+    VDI_TRACE("dev %{public}u status %{public}d", devId, static_cast<int>(status));
     int32_t ec = HdiSession::GetInstance().CallDisplayFunction(devId, &HdiDisplay::SetDisplayPowerStatus, status);
     DISPLAY_CHK_RETURN(ec != DISPLAY_SUCCESS, HDF_FAILURE, DISPLAY_LOGE("failed, ec=%{public}d", ec));
     return HDF_SUCCESS;
@@ -98,6 +116,7 @@ int32_t DisplayComposerVdiImpl::GetDisplayBacklight(uint32_t devId, uint32_t& le
 
 int32_t DisplayComposerVdiImpl::SetDisplayBacklight(uint32_t devId, uint32_t level)
 {
+    VDI_TRACE("dev %{public}u level %{public}u", devId, level);
     int32_t ec = HdiSession::GetInstance().CallDisplayFunction(devId, &HdiDisplay::SetDisplayBacklight, level);
     DISPLAY_CHK_RETURN(ec != DISPLAY_SUCCESS, HDF_FAILURE, DISPLAY_LOGE("failed, ec=%{public}d", ec));
     return HDF_SUCCESS;
@@ -135,6 +154,7 @@ int32_t DisplayComposerVdiImpl::SetDisplayClientCrop(uint32_t devId, const IRect
 
 int32_t DisplayComposerVdiImpl::SetDisplayClientBuffer(uint32_t devId, const BufferHandle& buffer, int32_t fence)
 {
+    VDI_TRACE("dev %{public}u %{public}dx%{public}d fmt %{public}d fence %{public}d", devId, buffer.width, buffer.height, buffer.format, fence);
     int32_t ec = HdiSession::GetInstance().CallDisplayFunction(devId, &HdiDisplay::SetDisplayClientBuffer, &buffer,
         fence);
     DISPLAY_CHK_RETURN(ec != DISPLAY_SUCCESS, HDF_FAILURE, DISPLAY_LOGE("failed, ec=%{public}d", ec));
@@ -149,6 +169,7 @@ int32_t DisplayComposerVdiImpl::SetDisplayClientDamage(uint32_t devId, std::vect
 
 int32_t DisplayComposerVdiImpl::SetDisplayVsyncEnabled(uint32_t devId, bool enabled)
 {
+    VDI_TRACE("dev %{public}u enabled %{public}d", devId, enabled);
     int32_t ec = HdiSession::GetInstance().CallDisplayFunction(devId, &HdiDisplay::SetDisplayVsyncEnabled, enabled);
     DISPLAY_CHK_RETURN(ec != DISPLAY_SUCCESS, HDF_FAILURE, DISPLAY_LOGE("failed, ec=%{public}d", ec));
     return HDF_SUCCESS;
@@ -156,6 +177,7 @@ int32_t DisplayComposerVdiImpl::SetDisplayVsyncEnabled(uint32_t devId, bool enab
 
 int32_t DisplayComposerVdiImpl::RegDisplayVBlankCallback(uint32_t devId, VBlankCallback cb, void* data)
 {
+    VDI_TRACE("dev %{public}u", devId);
     int32_t ec = HdiSession::GetInstance().CallDisplayFunction(devId, &HdiDisplay::RegDisplayVBlankCallback, cb, data);
     DISPLAY_CHK_RETURN(ec != DISPLAY_SUCCESS, HDF_FAILURE, DISPLAY_LOGE("failed, ec=%{public}d", ec));
     return HDF_SUCCESS;
@@ -206,12 +228,14 @@ int32_t DisplayComposerVdiImpl::SetDisplayProperty(uint32_t devId, uint32_t id, 
 int32_t DisplayComposerVdiImpl::Commit(uint32_t devId, int32_t& fence)
 {
     int32_t ec = HdiSession::GetInstance().CallDisplayFunction(devId, &HdiDisplay::Commit, &fence);
+    VDI_TRACE("dev %{public}u ec %{public}d fence %{public}d", devId, ec, fence);
     DISPLAY_CHK_RETURN(ec != DISPLAY_SUCCESS, HDF_FAILURE, DISPLAY_LOGE("failed, ec=%{public}d", ec));
     return HDF_SUCCESS;
 }
 
 int32_t DisplayComposerVdiImpl::CreateLayer(uint32_t devId, const LayerInfo& layerInfo, uint32_t& layerId)
 {
+    VDI_TRACE("dev %{public}u %{public}dx%{public}d", devId, layerInfo.width, layerInfo.height);
     int32_t ec = HdiSession::GetInstance().CallDisplayFunction(devId, &HdiDisplay::CreateLayer, &layerInfo, &layerId);
     DISPLAY_CHK_RETURN(ec != DISPLAY_SUCCESS, HDF_FAILURE, DISPLAY_LOGE("failed, ec=%{public}d", ec));
     return HDF_SUCCESS;
@@ -226,6 +250,7 @@ int32_t DisplayComposerVdiImpl::DestroyLayer(uint32_t devId, uint32_t layerId)
 
 int32_t DisplayComposerVdiImpl::PrepareDisplayLayers(uint32_t devId, bool& needFlushFb)
 {
+    VDI_TRACE("dev %{public}u", devId);
     int32_t ec = HdiSession::GetInstance().CallDisplayFunction(devId, &HdiDisplay::PrepareDisplayLayers, &needFlushFb);
     DISPLAY_CHK_RETURN(ec != DISPLAY_SUCCESS, HDF_FAILURE, DISPLAY_LOGE("failed, ec=%{public}d", ec));
     return HDF_SUCCESS;
@@ -293,6 +318,8 @@ int32_t DisplayComposerVdiImpl::SetLayerVisibleRegion(uint32_t devId, uint32_t l
 int32_t DisplayComposerVdiImpl::SetLayerBuffer(uint32_t devId, uint32_t layerId, const BufferHandle& buffer,
     int32_t fence)
 {
+    VDI_TRACE("dev %{public}u layer %{public}u %{public}dx%{public}d fmt %{public}d", devId, layerId,
+        buffer.width, buffer.height, buffer.format);
     const BufferHandle* holder = &buffer;
     int32_t ec = HdiSession::GetInstance().CallLayerFunction(devId, layerId, &HdiLayer::SetLayerBuffer, holder, fence);
     DISPLAY_CHK_RETURN(ec != DISPLAY_SUCCESS, HDF_FAILURE, DISPLAY_LOGE("failed, ec=%{public}d", ec));

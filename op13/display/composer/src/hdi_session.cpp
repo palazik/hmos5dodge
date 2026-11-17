@@ -71,6 +71,7 @@ int32_t HdiSession::RegHotPlugCallback(HotPlugCallback callback, void *data)
 {
     DISPLAY_CHK_RETURN((callback == nullptr), DISPLAY_NULL_PTR, DISPLAY_LOGE("the callback is nullptr"));
     mHotPlugCallBacks.emplace(callback, data);
+    DISPLAY_LOGI("hotplug callback registered; %{public}zu display(s) known", mHdiDisplays.size());
     for (auto displayMap : mHdiDisplays) {
         auto display = displayMap.second;
         if (display->IsConnected()) {
@@ -82,7 +83,8 @@ int32_t HdiSession::RegHotPlugCallback(HotPlugCallback callback, void *data)
 
 void HdiSession::DoHotPlugCallback(uint32_t devId, bool connect)
 {
-    DISPLAY_LOGD();
+    DISPLAY_LOGI("hotplug dev %{public}u connect %{public}d to %{public}zu callback(s)", devId, connect,
+        mHotPlugCallBacks.size());
     for (const auto &callback : mHotPlugCallBacks) {
         callback.first(devId, connect, callback.second);
     }
