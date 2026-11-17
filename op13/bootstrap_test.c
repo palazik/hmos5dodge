@@ -220,8 +220,43 @@ static int evaluate(const struct bpf_insn *instructions, size_t count,
     return -1;
 }
 
+static void data_evidence_fixture(void)
+{
+    char root[] = "/tmp/hmos-evidence-XXXXXX";
+    assert(mkdtemp(root));
+    char path[256], big[20000];
+    memset(big, 'x', sizeof(big));
+    snprintf(path, sizeof(path), "%s/report.log", root);
+    int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+    assert(fd >= 0 && write(fd, big, sizeof(big)) == (ssize_t)sizeof(big));
+    close(fd);
+    snprintf(path, sizeof(path), "%s/secret-link", root);
+    assert(!symlink("/etc/hostname", path));
+    char out_path[] = "/tmp/hmos-evidence-out-XXXXXX";
+    int output = mkstemp(out_path);
+    assert(output >= 0 && !unlink(out_path));
+    size_t used = 0;
+    record_directory(output, &used, 1 << 20, root, true, 16, 100, 0);
+    char text[4096] = {0};
+    ssize_t count = pread(output, text, sizeof(text) - 1, 0);
+    assert(count > 0 && strstr(text, "report.log (20000 bytes)") && strstr(text, "secret-link\n"));
+    assert(!strstr(text, "xxxxxxxxxx" "xxxxxxxxxx" "xxxxxxxxxx" "xxxxxxxxxx" "xxxxxxxxxx"
+                         "xxxxxxxxxx" "xxxxxxxxxx" "xxxxxxxxxx" "xxxxxxxxxx" "xxxxxxxxxx" "x"));
+    used = 0;
+    assert(!ftruncate(output, 0) && lseek(output, 0, SEEK_SET) == 0);
+    record_directory(output, &used, 40, root, true, 16, 100000, 0);  // global limit wins
+    struct stat st;
+    assert(!fstat(output, &st) && st.st_size <= 40);
+    close(output);
+    snprintf(path, sizeof(path), "%s/report.log", root); unlink(path);
+    snprintf(path, sizeof(path), "%s/secret-link", root); unlink(path);
+    rmdir(root);
+    puts("PASS /data evidence: file heads bounded, symlinks listed not followed, global limit enforced");
+}
+
 int main(int argc, char **argv)
 {
+    data_evidence_fixture();
     if ((argc == 5 || argc == 7) && !strcmp(argv[1], "-L")) {
         if (argc == 5)
             assert(!strcmp(argv[2], "W,E,F") && !strcmp(argv[3], "-z") && !strcmp(argv[4], "2000"));
