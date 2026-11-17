@@ -18,6 +18,7 @@ from ipc.package_module import verify as verify_ipc, RUNTIME_PATH
 from prepare_dlkm import load_order_line
 from boot_animation import verify as verify_boot_animation
 from init_plugins import verify as verify_init_plugins
+from native_compat import verify as verify_native_compat
 from param_config import hdf_dac
 from graphics_runtime import verify as verify_graphics_runtime, BRIDGES as GRAPHICS_BRIDGES, DRM_TARGET
 
@@ -167,6 +168,8 @@ def main():
     assert str((after / 'system/lib/modules').readlink()) == '/system_dlkm/lib/modules'
     lines = (after / 'hmos/modules/load-order').read_text().splitlines()
     assert lines == [load_order_line(row) for row in report['module_load_plan']]
+    if report.get('handoff_revision', 0) >= 20:
+        verify_native_compat(after, report['native_compat'])
     if report.get('handoff_revision', 0) >= 19:
         verify_init_plugins(after, report['init_plugins'])
     if report.get('handoff_revision', 0) >= 15:

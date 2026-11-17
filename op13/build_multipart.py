@@ -16,6 +16,7 @@ from hdf_hosts import validate as validate_hdf_hosts
 from graphics_runtime import stage_validated as stage_graphics
 from boot_animation import install as install_boot_animation
 from init_plugins import install as install_init_plugins
+from native_compat import install as install_native_compat, LABELS as COMPAT_LABELS
 
 
 def digest(path):
@@ -191,6 +192,7 @@ def main():
     for name in ('policy.31', 'developer_policy'):
         shutil.copyfile(workspace / 'out/op13-policy' / name, stage / 'hmos/policy' / name)
     init_plugins = install_init_plugins(workspace, stage)
+    native_compat = install_native_compat(workspace, stage)
     storage = stage / 'system/bin/storage_daemon'
     shutil.copyfile(workspace / 'work/inspect/system/system/bin/storage_daemon', storage)
     previous = subprocess.check_output(['patchelf', '--print-needed', str(storage)], text=True).splitlines()
@@ -227,7 +229,7 @@ def main():
         ('/hmos/init-modules(/.*)?', 'system_lib_file'), ('/system/bin/(init|hmos-native-init)', 'init_exec'),
         ('/system/bin/hmos-oobedone', 'system_bin_file'), ('/system/lib/modules', 'system_lib_file'),
         ('/system/etc/param/hdf_devmgr\\.para\\.dac', 'system_etc_file'),
-        ('/system/lib64/libop13_local_storage\\.so', 'system_lib_file')])}
+        ('/system/lib64/libop13_local_storage\\.so', 'system_lib_file')] + COMPAT_LABELS)}
     vendor_stage = output / 'vendor-patch'
     shutil.copytree(args.vendor_additions / 'tree', vendor_stage)
     owners, labels = metadata(workspace, 'stock', 'vendor')
@@ -273,7 +275,7 @@ def main():
     report = {'status': 'experimental-op13-only-multipart-dsu', 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 19, 'boot_animation': boot_animation, 'init_plugins': init_plugins, 'selinux_mode_changed': False,
+        'handoff_revision': 20, 'boot_animation': boot_animation, 'init_plugins': init_plugins, 'native_compat': native_compat, 'selinux_mode_changed': False,
         'native_graphics_runtime': validation['native_graphics_runtime'],
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,
