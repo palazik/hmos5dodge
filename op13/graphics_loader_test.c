@@ -64,7 +64,8 @@ int main(int argc, char **argv)
         void *(*load)(const char *, const char *) = dlsym(hdi, "LoadHdiImpl");
         assert(load);
         const char *descriptors[] = {"ohos.hdi.display.buffer.v1_0.IAllocator",
-            "ohos.hdi.display.composer.v1_2.IDisplayComposer"};
+            "ohos.hdi.display.composer.v1_2.IDisplayComposer",
+            "ohos.hdi.display.buffer.v1_0.IMapper", "ohos.hdi.display.buffer.v1_2.IMapper"};
         for (unsigned i = 0; i < sizeof(descriptors) / sizeof(descriptors[0]); ++i) {
             printf("constructing native HDI implementation: %s\n", descriptors[i]);
             assert(load(descriptors[i], "service"));

@@ -36,6 +36,124 @@ def load_report(workspace, path):
     return report
 
 
+def _module_name(path):
+    return Path(path.strip()).name.removesuffix('.ko').replace('-', '_')
+
+
+def _blocklist(path):
+    if not path.exists():
+        return set()
+    names = set()
+    for line in path.read_text().splitlines():
+        words = line.split()
+        if len(words) == 2 and words[0] == 'blocklist':
+            names.add(words[1].replace('-', '_'))
+    return names
+
+
+def expand_stock_load_order(workspace, report):
+    """Replace the display-only plan with stock vendor init's complete module set.
+
+    Mirrors /vendor/bin/system_dlkm_modprobe.sh (every system_dlkm module except
+    system_dlkm.modules.blocklist, zram and zsmalloc) followed by
+    /vendor/bin/vendor_modprobe.sh (vendor_dlkm modules.load order minus
+    modules.blocklist).  The original display/IPC rows stay required; all added
+    rows are optional, so one failing driver does not stop boot, as in stock.
+    Dependencies are ordered first because finit_module does not resolve them.
+    """
+    if report.get('stock_load_order'):
+        raise RuntimeError('stock load order already expanded')
+    modules = {}
+    trees = {}
+    for row in report['modules']:
+        name = row['name'].replace('-', '_')
+        source = workspace / row['source']
+        if row['partition'] not in ('vendor_dlkm', 'system_dlkm'):
+            continue
+        relative = Path(row['runtime_path']).relative_to('/' + row['partition'])
+        tree = Path(str(source)[:-len(str(relative))])
+        if trees.setdefault(row['partition'], tree) != tree:
+            raise RuntimeError('inconsistent DLKM tree for ' + row['partition'])
+        if name in modules and modules[name]['sha256'] != row['sha256']:
+            raise RuntimeError('conflicting stock module name: ' + name)
+        modules.setdefault(name, dict(row, name=name, optional=True))
+    if set(trees) != {'vendor_dlkm', 'system_dlkm'}:
+        raise RuntimeError('both stock DLKM trees are required')
+    vendor_dir = trees['vendor_dlkm'] / 'lib/modules'
+    system_dir = trees['system_dlkm'] / 'lib/modules'
+    metadata = {}
+    for path in (vendor_dir / 'modules.load', vendor_dir / 'modules.blocklist',
+                 vendor_dir / 'system_dlkm.modules.blocklist', system_dir / 'modules.load'):
+        if path.exists():
+            metadata[str(path.relative_to(workspace))] = digest(path)
+    system_block = _blocklist(vendor_dir / 'system_dlkm.modules.blocklist') | {'zram', 'zsmalloc'}
+    # Stock modules.load also lists WLAN drivers for other chip variants.  Stock
+    # Android on this OP13 ends with qca_cld3_peach_v2 only (phone lsmod,
+    # 2026-11-10), so the alternates are not offered the hardware here.
+    variant_block = {'icnss2', 'qca_cld3_kiwi_v2', 'qca_cld3_peach'}
+    vendor_block = _blocklist(vendor_dir / 'modules.blocklist') | variant_block
+    system_order = [_module_name(x) for x in (system_dir / 'modules.load').read_text().splitlines() if x.strip()]
+    system_order += sorted({n for n, r in modules.items() if r['partition'] == 'system_dlkm'} - set(system_order))
+    system_order = [n for n in system_order if n not in system_block]
+    vendor_order = [_module_name(x) for x in (vendor_dir / 'modules.load').read_text().splitlines() if x.strip()]
+    vendor_order = [n for n in vendor_order if n not in vendor_block]
+    required = []
+    for row in report['load_plan']:
+        name = row['name'].replace('-', '_')
+        modules[name] = dict(row, name=name, optional=False)  # proven display/IPC rows win
+        required.append(name)
+    sequence = list(dict.fromkeys(system_order + vendor_order + required))
+    blocked_required = sorted(set(required) & (system_block | vendor_block))
+    for name in sequence:
+        if name not in modules:
+            raise RuntimeError('stock load list names a missing module: ' + name)
+    ordered, done, active, external = [], set(), set(), set()
+
+    def visit(name):
+        if name in done:
+            return
+        if name in active:
+            raise RuntimeError('module dependency cycle: ' + name)
+        active.add(name)
+        entry = modules[name]
+        dependencies = [x.replace('-', '_') for x in entry.get('depends', '').split(',') if x]
+        for hint in entry.get('softdep', '').partition('pre:')[2].partition('post:')[0].split():
+            dependencies.append(hint.replace('-', '_'))
+        for dependency in dependencies:
+            # Blocklisted or absent providers are not loaded (modprobe -b does the
+            # same); first-stage vendor_boot modules are usually already present.
+            if dependency in modules and (not modules[dependency]['optional'] or
+                                          dependency not in system_block | vendor_block):
+                visit(dependency)
+            else:
+                external.add(dependency)
+        active.remove(name)
+        done.add(name)
+        ordered.append(entry)
+
+    for name in sequence:
+        visit(name)
+    for row in ordered:
+        if row['optional'] and digest(workspace / row['source']) != row['sha256']:
+            raise RuntimeError('stock module changed: ' + row['name'])
+    report['load_plan'] = ordered
+    report['stock_load_order'] = {
+        'policy': 'stock system_dlkm_modprobe.sh + vendor_modprobe.sh order and blocklists; '
+                  'added rows optional, original display/IPC rows required',
+        'metadata_sha256': metadata, 'required': len(required),
+        'optional': sum(1 for row in ordered if row['optional']),
+        'system_blocklisted': sorted(system_block), 'vendor_blocklisted': sorted(vendor_block),
+        'wlan_variants_excluded': sorted(variant_block),
+        'required_also_blocklisted': blocked_required,
+        'dependencies_outside_dlkm': sorted(external)}
+    report['load_plan_sources'] = dict(Counter(row['partition'] for row in ordered))
+    return report
+
+
+def load_order_line(row):
+    return row['name'] + ' ' + row['runtime_path'] + (' optional' if row.get('optional') else '')
+
+
 def write_load_plan(workspace, stage, report):
     directory = stage / 'hmos/modules'
     directory.mkdir(parents=True, exist_ok=True)
@@ -45,7 +163,7 @@ def write_load_plan(workspace, stage, report):
     for row in report['load_plan']:
         if row['runtime_path'].startswith('/hmos/modules/'):
             shutil.copyfile(workspace / row['source'], directory / (row['name'] + '.ko'))
-        lines.append(row['name'] + ' ' + row['runtime_path'])
+        lines.append(load_order_line(row))
     (directory / 'load-order').write_text('\n'.join(lines) + '\n')
 
 

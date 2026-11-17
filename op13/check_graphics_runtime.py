@@ -116,6 +116,21 @@ def main():
                 raise RuntimeError(label + ': ' + result.stdout[-3000:] + result.stderr[-1500:])
             tests.append({'name': label, 'passed': True})
             print('PASS production graphics bind/root switch and native loader', action, flush=True)
+        command = list(common) + ['--uid', '0', '--gid', '0', '--cap-add', 'CAP_SYS_ADMIN',
+            '--cap-add', 'CAP_SYS_CHROOT', '--ro-bind', str(runtime / CONFIG), '/' + CONFIG,
+            '--ro-bind', str(runtime / 'hmos/display'), '/hmos/display',
+            '--ro-bind', str(ROOT / 'out/op13-display/mapper-buffer-test'), '/vendor/bin/mapper-buffer-test',
+            '--ro-bind', str(ROOT / 'out/op13-bootstrap/graphics-namespace-test'), '/test/namespace-test',
+            '--ro-bind', str(marker), '/test/graphics-namespace-fixture',
+            '--ro-bind', str(ROOT / 'work/qemu-aarch64-static'), '/test/qemu',
+            '--clearenv', '--setenv', 'PATH', '/system/bin:/vendor/bin',
+            '/test/namespace-test', 'service-expose', '/vendor/bin/mapper-buffer-test', 'expect-native']
+        result = subprocess.run(command, capture_output=True, text=True, timeout=15)
+        (runtime / 'native-mapper-buffer.log').write_text(result.stdout + result.stderr)
+        if result.returncode:
+            raise RuntimeError('native mapper buffer: ' + result.stdout[-3000:] + result.stderr[-1500:])
+        tests.append({'name': 'native-mapper-buffer-lifetime', 'passed': True})
+        print('PASS actual native mapper buffer mapping and lifetime in service-root fixture', flush=True)
     (runtime / 'validation.json').write_text(json.dumps({'passed': True, 'tests': tests,
         'scope': 'Actual donor musl namespace config, stock Android DRM collision, production graphics bind/pivot_root/setns, configured graphics bind in a nested service-root fixture, native graphics relocation and HDI factories; full native sandbox engine, DRM display device, service registration and frame untested.'}, indent=2) + '\n')
 

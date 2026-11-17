@@ -14,7 +14,9 @@ import zipfile
 from build_multipart import digest
 from image_utils import filesystem_info
 from selinux_config import permissive_config
-from ipc.package_module import verify as verify_ipc
+from ipc.package_module import verify as verify_ipc, RUNTIME_PATH
+from prepare_dlkm import load_order_line
+from boot_animation import verify as verify_boot_animation
 from param_config import hdf_dac
 from graphics_runtime import verify as verify_graphics_runtime, BRIDGES as GRAPHICS_BRIDGES, DRM_TARGET
 
@@ -163,7 +165,12 @@ def main():
     assert (after / 'system/lib/modules').is_symlink()
     assert str((after / 'system/lib/modules').readlink()) == '/system_dlkm/lib/modules'
     lines = (after / 'hmos/modules/load-order').read_text().splitlines()
-    assert lines == [row['name'] + ' ' + row['runtime_path'] for row in report['module_load_plan']]
+    assert lines == [load_order_line(row) for row in report['module_load_plan']]
+    if report.get('handoff_revision', 0) >= 15:
+        verify_boot_animation(after, report['boot_animation'])
+    if report.get('handoff_revision', 0) >= 14:
+        assert report['module_audit']['stock_load_order']['required'] == sum(1 for row in report['module_load_plan'] if not row.get('optional'))
+        assert 'msm_drm /vendor_dlkm/lib/modules/msm_drm.ko' in lines and 'op13_hmos_ipc ' + RUNTIME_PATH in lines
     print('PASS original system files/symlinks outside explicit patch paths:', system_files_checked, flush=True)
     if not args.keep_extracted:
         remove_readback(after, out)

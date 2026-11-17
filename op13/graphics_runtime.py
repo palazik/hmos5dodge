@@ -3,9 +3,14 @@
 import shutil
 import json
 
-BRIDGES = ('liballocator_service_1.0.z.so', 'libdisplay_composer_service_1.2.z.so',
-           'libcomposer_buffer_cache.z.so', 'libdisplay_buffer_stub_1.1.z.so',
-           'libdisplay_buffer_stub_1.2.z.so')
+BRIDGE_SOURCES = {name: name for name in ('liballocator_service_1.0.z.so',
+    'libdisplay_composer_service_1.2.z.so', 'libcomposer_buffer_cache.z.so',
+    'libdisplay_buffer_stub_1.1.z.so', 'libdisplay_buffer_stub_1.2.z.so')}
+BRIDGE_SOURCES.update({name: 'chipsetsdk/' + name for name in
+    ('libmapper_service_1.0.z.so', 'libmapper_service_1.2.z.so',
+     # render_service retried this 477 times in revision 14; it loads our buffer VDI.
+     'libmetadata_service_1.1.z.so')})
+BRIDGES = tuple(BRIDGE_SOURCES)
 CONFIG = 'system/etc/ld-musl-namespace-aarch64.ini'
 DRM_TARGET = '/system/lib64/chipset-sdk/libdrm.so'
 SANDBOX_CONFIGS = tuple('system/etc/sandbox/' + name + '-sandbox.json' for name in ('system', 'chipset'))
@@ -57,7 +62,7 @@ def install(workspace, stage):
     display = stage / 'hmos/display'
     display.mkdir(parents=True, exist_ok=True)
     for name in BRIDGES:
-        shutil.copyfile(workspace / 'work/inspect/vendor-lib64' / name, display / name)
+        shutil.copyfile(workspace / 'work/inspect/vendor-lib64' / BRIDGE_SOURCES[name], display / name)
     link = display / 'libdrm.so'
     if link.is_symlink():
         link.unlink()
@@ -78,7 +83,7 @@ def verify(workspace, stage):
     if not link.is_symlink() or str(link.readlink()) != DRM_TARGET:
         raise ValueError('native DRM link does not select the original HMOS implementation')
     for name in BRIDGES:
-        if (stage / 'hmos/display' / name).read_bytes() != (workspace / 'work/inspect/vendor-lib64' / name).read_bytes():
+        if (stage / 'hmos/display' / name).read_bytes() != (workspace / 'work/inspect/vendor-lib64' / BRIDGE_SOURCES[name]).read_bytes():
             raise ValueError('native graphics bridge changed: ' + name)
 
 

@@ -14,6 +14,7 @@ from selinux_config import write_config
 from param_config import write_config as write_param_config
 from hdf_hosts import validate as validate_hdf_hosts
 from graphics_runtime import stage_validated as stage_graphics
+from boot_animation import install as install_boot_animation
 
 
 def digest(path):
@@ -129,11 +130,12 @@ def main():
     parser.add_argument('--ipc-vm-report', type=Path, required=True)
     parser.add_argument('--startup-dir', type=Path, help='regenerated native startup tree')
     args = parser.parse_args()
-    from prepare_dlkm import load_report, write_load_plan
+    from prepare_dlkm import expand_stock_load_order, load_report, write_load_plan
     workspace, output = args.workspace.resolve(), args.output.resolve()
     dlkm = load_report(workspace, args.dlkm_audit)
     from ipc.package_module import attach as attach_ipc
     attach_ipc(workspace, dlkm, args.ipc_module, args.ipc_vm_report)
+    expand_stock_load_order(workspace, dlkm)
     if 'vendor_base_sha256' in dlkm and digest(workspace / 'op13_stock/vendor.img') != dlkm['vendor_base_sha256']:
         raise RuntimeError('vendor base is not from the audited module firmware')
     startup_dir = args.startup_dir or workspace / 'out/op13-startup'
@@ -182,6 +184,7 @@ def main():
     stage_graphics(workspace, stage)
     shutil.copyfile(startup_dir / 'mask-init-dirs', stage / 'hmos/mask-init-dirs')
     shutil.copytree(workspace / 'out/op13-ui', stage / 'hmos/ui')
+    boot_animation = install_boot_animation(workspace, stage)
     for name in ('libdisplay_buffer_vdi_impl.z.so', 'libdisplay_composer_vdi_impl.z.so'):
         shutil.copyfile(workspace / 'out/op13-display' / name, stage / 'hmos/display' / name)
     for name in ('policy.31', 'developer_policy'):
@@ -270,7 +273,7 @@ def main():
     report = {'status': 'experimental-op13-only-multipart-dsu', 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 12, 'selinux_mode_changed': False,
+        'handoff_revision': 15, 'boot_animation': boot_animation, 'selinux_mode_changed': False,
         'native_graphics_runtime': validation['native_graphics_runtime'],
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,
@@ -282,12 +285,15 @@ def main():
         'native_startup_recorder': {'maximum_bytes': 4194304, 'duration_seconds': 180,
                                     'scope': 'Kernel records, PID-1/UI process state and bounded read-only HiLog queries; latest handoff only',
                                     'hilog_query_limit_bytes': 262144, 'hilog_query_timeout_ms': 3000},
+        'native_graphics_hilog_queries': {'maximum_queries': 7, 'lines_per_query': 200,
+            'levels': 'I,W,E,F', 'tags': 'DISP,OP13Gralloc,SweetHAL,MAPPER_SRV',
+            'within_existing_recorder_limit': True},
         'kernel_modified': False, 'physical_partitions_written': False,
         'vendor_base': 'op13_stock/vendor.img', 'whole_donor_vendor_used': False,
         'odm_source': 'Reuse the existing mounted stock ODM EROFS read-only; no ODM partition in the ZIP',
         'dlkm_inputs': dlkm['images'], 'module_load_plan': dlkm['load_plan'],
         'module_audit': {key: dlkm[key] for key in ('scope', 'vendor_boot', 'payload_properties',
-                         'crc_checks', 'load_plan_sources', 'vendor_base_sha256', 'display_suppliers') if key in dlkm},
+                         'crc_checks', 'load_plan_sources', 'vendor_base_sha256', 'display_suppliers', 'stock_load_order') if key in dlkm},
         'input_images': audit['images'],
         'startup_configuration': startup,
         'partitions': records, 'zip': package,

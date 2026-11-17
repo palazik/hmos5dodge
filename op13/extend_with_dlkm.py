@@ -9,12 +9,13 @@ from pathlib import Path
 import shutil
 import subprocess
 from build_multipart import command, digest, metadata, patch_image, sign_image, write_package
-from prepare_dlkm import load_report, write_load_plan
+from prepare_dlkm import expand_stock_load_order, load_report, write_load_plan
 from selinux_config import write_config
 from ipc.package_module import attach as attach_ipc, patch as patch_ipc
 from param_config import write_config as write_param_config
 from hdf_hosts import validate as validate_hdf_hosts
 from graphics_runtime import stage_validated as stage_graphics
+from boot_animation import install as install_boot_animation
 
 
 def main():
@@ -56,6 +57,7 @@ def main():
             raise RuntimeError('component symlink changed after validation: ' + source)
     dlkm = load_report(root, args.dlkm_audit)
     attach_ipc(root, dlkm, args.ipc_module, args.ipc_vm_report)
+    expand_stock_load_order(root, dlkm)
     if 'vendor_base_sha256' in dlkm:
         base_vendor = report.get('input_images', {}).get('op13_stock/vendor.img', {}).get('sha256')
         if base_vendor != dlkm['vendor_base_sha256']:
@@ -80,6 +82,7 @@ def main():
         shutil.copyfile(root / 'out/op13-display' / library, stage / 'hmos/display' / library)
     validate_hdf_hosts(stage / 'hmos/startup', startup or report['startup_configuration'])
     stage_graphics(root, stage)
+    boot_animation = install_boot_animation(root, stage)
     write_load_plan(root, stage, dlkm)
     (stage / 'system/lib').mkdir(exist_ok=True)
     link = stage / 'system/lib/modules'
@@ -159,7 +162,7 @@ def main():
     updated.update({'partitions': records, 'zip': package, 'component_validation': components, 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 12, 'selinux_mode_changed': False,
+        'handoff_revision': 15, 'selinux_mode_changed': False,
         'native_graphics_runtime': components['native_graphics_runtime'],
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,
@@ -171,14 +174,18 @@ def main():
         'native_startup_recorder': {'maximum_bytes': 4194304, 'duration_seconds': 180,
                                     'scope': 'Kernel records, PID-1/UI process state and bounded read-only HiLog queries; latest handoff only',
                                     'hilog_query_limit_bytes': 262144, 'hilog_query_timeout_ms': 3000},
+        'native_graphics_hilog_queries': {'maximum_queries': 7, 'lines_per_query': 200,
+            'levels': 'I,W,E,F', 'tags': 'DISP,OP13Gralloc,SweetHAL,MAPPER_SRV',
+            'within_existing_recorder_limit': True},
         'base_candidate': {'system_sha256': report['partitions']['system']['sha256'], 'packed_validation': base_validation,
                            'last_phone_test': report.get('last_phone_test') or
                            report.get('base_candidate', {}).get('last_phone_test')},
         'odm_source': 'Existing stock ODM EROFS mounted by Android first-stage; reused read-only',
         'dlkm_inputs': dlkm['images'], 'module_load_plan': dlkm['load_plan'],
         'dlkm_audit_scope': dlkm['scope'], 'captured_vendor_modules_byte_identical': dlkm['captured_vendor_modules_byte_identical']})
+    updated['boot_animation'] = boot_animation
     updated['module_audit'] = {key: dlkm[key] for key in ('scope', 'vendor_boot', 'payload_properties',
-        'crc_checks', 'load_plan_sources', 'vendor_base_sha256', 'display_suppliers') if key in dlkm}
+        'crc_checks', 'load_plan_sources', 'vendor_base_sha256', 'display_suppliers', 'stock_load_order') if key in dlkm}
     if startup:
         updated['startup_configuration'] = startup
         updated['known_unverified'] = [item for item in updated['known_unverified'] if 'missing donor libinput_driver' not in item]

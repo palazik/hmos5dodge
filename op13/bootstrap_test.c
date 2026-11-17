@@ -141,7 +141,7 @@ static void recorder_fixture(bool exec_failed, size_t limit)
     close(output);
 }
 
-static void hilog_fixture(const char *mode, const char *binary, bool success)
+static void hilog_fixture(const char *mode, const char *binary, bool success, bool graphics)
 {
     char path[] = "/tmp/hmos-hilog-XXXXXX";
     int output = mkstemp(path);
@@ -150,7 +150,7 @@ static void hilog_fixture(const char *mode, const char *binary, bool success)
     // reach the executed query. The fixture also checks stdin is closed.
     assert(!setenv("HMOS_HILOG_TEST_MODE", mode, 1));
     struct hilog_snapshot snapshot = {.input = -1};
-    assert(!start_hilog_snapshot(&snapshot, binary, 100));
+    assert(!start_hilog_snapshot(&snapshot, binary, 100, graphics));
     size_t used = 0;
     long long start = monotonic_ms();
     while (snapshot.child && monotonic_ms() - start < 3000) {
@@ -222,8 +222,13 @@ static int evaluate(const struct bpf_insn *instructions, size_t count,
 
 int main(int argc, char **argv)
 {
-    if (argc == 5 && !strcmp(argv[1], "-L")) {
-        assert(!strcmp(argv[2], "W,E,F") && !strcmp(argv[3], "-z") && !strcmp(argv[4], "2000"));
+    if ((argc == 5 || argc == 7) && !strcmp(argv[1], "-L")) {
+        if (argc == 5)
+            assert(!strcmp(argv[2], "W,E,F") && !strcmp(argv[3], "-z") && !strcmp(argv[4], "2000"));
+        else
+            assert(!strcmp(argv[2], "I,W,E,F") && !strcmp(argv[3], "-T") &&
+                !strcmp(argv[4], "DISP,OP13Gralloc,SweetHAL,MAPPER_SRV") &&
+                !strcmp(argv[5], "-z") && !strcmp(argv[6], "200"));
         errno = 0;
         assert(fcntl(0, F_GETFD) == -1 && errno == EBADF);
         for (int fd = 3; fd < 256; ++fd) {
@@ -256,10 +261,12 @@ int main(int argc, char **argv)
     mapper_fixtures();
     delayed_device_fixture();
     storage_mountpoint_fixture();
-    hilog_fixture("normal", "/proc/self/exe", true);
-    hilog_fixture("missing", "/hmos-missing-hilog-fixture", false);
-    hilog_fixture("flood", "/proc/self/exe", false);
-    hilog_fixture("eof-stall", "/proc/self/exe", false);
+    for (unsigned graphics = 0; graphics < 2; ++graphics) {
+        hilog_fixture("normal", "/proc/self/exe", true, graphics);
+        hilog_fixture("missing", "/hmos-missing-hilog-fixture", false, graphics);
+        hilog_fixture("flood", "/proc/self/exe", false, graphics);
+        hilog_fixture("eof-stall", "/proc/self/exe", false, graphics);
+    }
     assert(preserve_boot_permissive("0", "console=tty0 androidboot.selinux=permissive"));
     assert(!preserve_boot_permissive("1", "console=tty0"));
     assert(!preserve_boot_permissive("0", "console=tty0 enforcing=1"));
@@ -279,6 +286,16 @@ int main(int argc, char **argv)
     assert(!options[0]);
     assert(drm_boot_options("msm_drm.dsi_display0=toolong", options, 8) == -1 && errno == E2BIG);
     assert(drm_boot_options("msm_drm.dsi_display0=\"unterminated", options, sizeof(options)) == -1 && errno == EINVAL);
+    assert(module_boot_options("a oplus_bsp_tp_custom.dsi_display0=qcom,p:c: pci-msm-drv.pcie_sm_regs=1,2 x.y=z",
+        "oplus_bsp_tp_custom", options, sizeof(options)) == 1);
+    assert(!strcmp(options, "dsi_display0=qcom,p:c:"));
+    assert(module_boot_options("pci-msm-drv.pcie_sm_regs=1,2 pci_msm_drv.b=\"q r\"", "pci_msm_drv",
+        options, sizeof(options)) == 2);
+    assert(!strcmp(options, "pcie_sm_regs=1,2 b=\"q r\""));
+    assert(module_boot_options("drm.x=1 msm_drmx.y=2 msm_drm.=3 msm_drm.flag", "msm_drm", options, sizeof(options)) == 0);
+    assert(!options[0]);
+    assert(module_boot_options("abc.p=toolong", "abc", options, 6) == -1 && errno == E2BIG);
+    assert(module_boot_options("abc.p=\"open", "abc", options, sizeof(options)) == -1 && errno == EINVAL);
     assert(dm_name_valid("dm-0") && dm_name_valid("dm-987"));
     assert(!dm_name_valid("dm-") && !dm_name_valid("userdata") && !dm_name_valid("dm-1/../sda"));
     assert(module_path_valid("/vendor_dlkm/lib/modules/msm_drm.ko"));

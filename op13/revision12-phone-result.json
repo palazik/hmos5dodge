@@ -1,0 +1,25 @@
+{
+  "revision": 12,
+  "phone_boot_tested": true,
+  "full_framework_boot_succeeded": false,
+  "visible_screen": "OnePlus logo followed by dark screen; owner reports phone remains running",
+  "connected_device_operations": "read-only capture complete; device released",
+  "native_binder_and_token_checks_passed": true,
+  "latest_bootstrap_start_line": 776,
+  "graphics_runtime_bind_message_seen": true,
+  "android_libdrm_errno_relocation_records": 0,
+  "missing_mapper_header_records": 481,
+  "composer_drm_initialization_seen": true,
+  "dsi_panel_dead_seen": true,
+  "valid_harmonyos_frame_observed": false,
+  "bootstrap_log": {
+    "lines": 866,
+    "bytes": 38043,
+    "sha256": "1474df273f3d04e2ec78eb6426810d275d03eb21075f0752751150a8f07b5a26"
+  },
+  "native_log": {
+    "lines": 28977,
+    "bytes": 2255227,
+    "sha256": "8482d85fe94b9288052546677c710093e08f97f904ac614bbeb4bacd37ee9274"
+  }
+}

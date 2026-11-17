@@ -58,3 +58,6 @@ file "$output"/*.so
  -lhitrace_meter -lutils.z -lc++ -lc -o "$output/display-mode-test"
 "$cxx" -std=c++17 -O2 "$repo/op13/display_gralloc_test.cpp" \
  -ldl -lc++ -lc -o "$output/display-gralloc-test"
+"$cxx" "${flags[@]}" "$repo/op13/mapper_buffer_test.cpp" \
+ -lhdi.z -lipc_single.z -lutils.z -lhilog -lsec_shared.z -lhdf_utils.z \
+ -lhitrace_meter -ldl -lc++ -lc -o "$output/mapper-buffer-test"

@@ -360,7 +360,7 @@ struct hilog_snapshot {
     size_t bytes;
 };
 
-static int start_hilog_snapshot(struct hilog_snapshot *snapshot, const char *binary, unsigned timeout_ms)
+static int start_hilog_snapshot(struct hilog_snapshot *snapshot, const char *binary, unsigned timeout_ms, bool graphics)
 {
     if (snapshot->child) { errno = EBUSY; return -1; }
     int descriptors[2];
@@ -382,7 +382,10 @@ static int start_hilog_snapshot(struct hilog_snapshot *snapshot, const char *bin
         close(0);
         if (syscall(__NR_close_range, 3U, ~0U, 0)) _exit(126);
         // -z is already nonblocking; this donor rejects combining it with -x.
-        execl(binary, "hilog", "-L", "W,E,F", "-z", "2000", NULL);
+        if (graphics)
+            execl(binary, "hilog", "-L", "I,W,E,F", "-T", "DISP,OP13Gralloc,SweetHAL,MAPPER_SRV", "-z", "200", NULL);
+        else
+            execl(binary, "hilog", "-L", "W,E,F", "-z", "2000", NULL);
         dprintf(2, "HiLog query exec failed: errno=%d\n", errno);
         _exit(127);
     }
@@ -445,13 +448,17 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 12; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 15; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
     if (start < 0) return;
     struct hilog_snapshot snapshot = {.input = -1};
-    const unsigned snapshot_times[] = {10000, 15000, 25000, 45000, 90000, 150000, 175000};
+    const struct { unsigned ms; bool graphics; } snapshot_times[] = {
+        {10000, false}, {11000, true}, {15000, false}, {16000, true},
+        {25000, false}, {26000, true}, {45000, false}, {46000, true},
+        {90000, false}, {91000, true}, {150000, false}, {151000, true},
+        {175000, false}, {176000, true}};
     size_t next_snapshot = 0;
     struct pollfd inputs[] = {{kernel, POLLIN, 0}, {exec_pipe, POLLIN, 0}, {-1, POLLIN, 0}};
     while (used < limit) {
@@ -505,11 +512,13 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
         }
         pump_hilog_snapshot(&snapshot, output, &used, limit);
         if (!snapshot.child && next_snapshot < sizeof(snapshot_times) / sizeof(snapshot_times[0]) &&
-            now - start >= snapshot_times[next_snapshot]) {
+            now - start >= snapshot_times[next_snapshot].ms) {
             char title[160];
-            snprintf(title, sizeof(title), "\n--- HiLog warning/error snapshot at %lld ms ---\n", now - start);
+            bool graphics = snapshot_times[next_snapshot].graphics;
+            snprintf(title, sizeof(title), "\n--- HiLog %s snapshot at %lld ms ---\n",
+                     graphics ? "graphics info/warning/error" : "warning/error", now - start);
             append_native_log(output, title, strlen(title), &used, limit);
-            if (start_hilog_snapshot(&snapshot, "/system/bin/hilog", 3000)) {
+            if (start_hilog_snapshot(&snapshot, "/system/bin/hilog", 3000, graphics)) {
                 snprintf(title, sizeof(title), "HiLog query unavailable: errno=%d\n", errno);
                 append_native_log(output, title, strlen(title), &used, limit);
             }
@@ -725,23 +734,78 @@ static int drm_boot_options(const char *cmdline, char *options, size_t capacity)
     return count;
 }
 
+/*
+ * Stock modprobe applies "<module>.<param>=<value>" kernel arguments to the
+ * module it loads; finit_module does not, so forward them the same way.
+ * '-' and '_' are equivalent in module names, as in modprobe.
+ */
+static int module_boot_options(const char *cmdline, const char *name, char *options, size_t capacity)
+{
+    if (!capacity) { errno = EINVAL; return -1; }
+    options[0] = 0;
+    size_t used = 0, name_length = strlen(name);
+    int count = 0;
+    for (const char *p = cmdline; *p;) {
+        while (*p == ' ' || *p == '\t' || *p == '\n') ++p;
+        if (!*p) break;
+        const char *start = p;
+        bool quoted = false;
+        while (*p && (quoted || (*p != ' ' && *p != '\t' && *p != '\n'))) {
+            if (*p == '"') quoted = !quoted;
+            ++p;
+        }
+        if (quoted) { errno = EINVAL; return -1; }
+        size_t token = p - start;
+        if (token <= name_length + 1 || start[name_length] != '.') continue;
+        bool same = true;
+        for (size_t i = 0; i < name_length && same; ++i) {
+            char a = start[i] == '-' ? '_' : start[i], b = name[i] == '-' ? '_' : name[i];
+            same = a == b;
+        }
+        const char *parameter = start + name_length + 1, *equals = memchr(parameter, '=', p - parameter);
+        if (!same || !equals || equals == parameter || memchr(parameter, '"', equals - parameter)) continue;
+        size_t length = p - parameter;
+        if (length + (used ? 1 : 0) >= capacity - used) { errno = E2BIG; return -1; }
+        if (used) options[used++] = ' ';
+        memcpy(options + used, parameter, length);
+        used += length;
+        options[used] = 0;
+        ++count;
+    }
+    return count;
+}
+
+/*
+ * Load order mirrors stock vendor init: every system_dlkm module, then the
+ * vendor_dlkm modules.load list, minus the stock blocklists.  Rows marked
+ * "optional" behave like stock modprobe (a failed module is logged and the
+ * rest continue).  Unmarked rows are the display/IPC path and stay fatal.
+ */
 static void load_stock_modules(void)
 {
     FILE *list = fopen("/hmos/modules/load-order", "re");
     if (!list) fatal("stock module order");
-    char line[640], name[128], source[384], extra;
+    char cmdline[16384];
+    if (read_text("/proc/cmdline", cmdline, sizeof(cmdline))) fatal("stock module boot arguments");
+    if (strlen(cmdline) == sizeof(cmdline) - 1) { errno = E2BIG; fatal("truncated boot arguments"); }
+    char line[640], name[128], source[384], flag[16], extra;
+    unsigned required = 0, optional = 0, present = 0, failed = 0, forwarded = 0, rows = 0;
     while (fgets(line, sizeof(line), list)) {
         line[strcspn(line, "\r\n")] = 0;
         if (!line[0]) continue;
-        if (sscanf(line, "%127s %383s %c", name, source, &extra) != 2 || !module_path_valid(source)) {
+        flag[0] = 0;
+        int fields = sscanf(line, "%127s %383s %15s %c", name, source, flag, &extra);
+        bool is_optional = fields == 3 && !strcmp(flag, "optional");
+        if ((fields != 2 && !is_optional) || !module_path_valid(source)) {
             errno = EINVAL; fatal("invalid module source path");
         }
         for (const char *p = name; *p; ++p)
             if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
                   (*p >= '0' && *p <= '9') || *p == '_')) { errno = EINVAL; fatal("module name"); }
+        if (++rows % 64 == 0) log_line("stock module progress: row %u (%s)", rows, name);
         char path[256];
         snprintf(path, sizeof(path), "/sys/module/%s", name);
-        if (!access(path, F_OK)) continue;
+        if (!access(path, F_OK)) { ++present; continue; }
         char mounted_source[768];
         const char *module_source = source;
         if (strncmp(source, "/hmos/modules/", 14)) {
@@ -749,24 +813,45 @@ static void load_stock_modules(void)
             module_source = mounted_source;
         }
         int fd = open(module_source, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-        if (fd < 0) fatal(module_source);
+        if (fd < 0) {
+            if (!is_optional) fatal(module_source);
+            log_line("optional stock module %s unavailable: errno=%d (%s)", name, errno, strerror(errno));
+            ++failed;
+            continue;
+        }
         char options[4096] = {0};
         if (!strcmp(name, "msm_drm")) {
-            char cmdline[16384];
-            if (read_text("/proc/cmdline", cmdline, sizeof(cmdline))) fatal("stock DRM boot arguments");
-            if (strlen(cmdline) == sizeof(cmdline) - 1) { errno = E2BIG; fatal("truncated boot arguments"); }
             int selectors = drm_boot_options(cmdline, options, sizeof(options));
             if (selectors < 0) fatal("DRM panel parameter parsing");
             log_line("forwarding %d stock DSI panel selector(s) to msm_drm; values omitted", selectors);
+        } else {
+            int count = module_boot_options(cmdline, name, options, sizeof(options));
+            if (count < 0) {
+                if (!is_optional) fatal("module boot argument parsing");
+                log_line("optional stock module %s: boot arguments not forwarded: errno=%d", name, errno);
+                options[0] = 0;
+            } else if (count) {
+                log_line("forwarding %d boot argument(s) to %s; values omitted", count, name);
+                forwarded += count;
+            }
         }
         int result = syscall(__NR_finit_module, fd, options, 0); // no force flags
         int saved = errno;
         close(fd);
         errno = saved;
-        if (result && errno != EEXIST) fatal(name);
-        log_line("loaded planned module %s", name);
+        if (result && errno != EEXIST) {
+            if (!is_optional) fatal(name);
+            log_line("optional stock module %s failed: errno=%d (%s); continuing like stock modprobe",
+                     name, errno, strerror(errno));
+            ++failed;
+            continue;
+        }
+        if (is_optional) ++optional;
+        else { ++required; log_line("loaded planned module %s", name); }
     }
     fclose(list);
+    log_line("stock modules: %u required loaded, %u optional loaded, %u already present, %u optional failed, "
+             "%u boot argument(s) forwarded", required, optional, present, failed, forwarded);
 }
 
 static bool device_numbers(const char *path, unsigned *major_number, unsigned *minor_number)
@@ -1096,7 +1181,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 12; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 15; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
@@ -1211,6 +1296,8 @@ int main(int argc, char **argv)
     expose_graphics_runtime();
     root_bind("/hmos/ui/display_manager_config.xml", "/sys_prod/etc/window/resources/display_manager_config.xml", true);
     root_bind("/hmos/ui/hgm_policy_config.xml", "/sys_prod/etc/graphic/hgm_policy_config.xml", true);
+    // Donor sys_prod has an empty etc/bootanimation; select the picture player.
+    root_bind("/hmos/ui/bootanimation", "/sys_prod/etc/bootanimation", true);
     log_line("stage=device-filter");
     isolate_devices();
     // No automatic critical-service reboot or raw-I/O/module privilege after
