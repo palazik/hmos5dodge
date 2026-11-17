@@ -312,6 +312,89 @@ static void record_init_state(int output, size_t *used, size_t limit)
     append_native_log(output, "\n", 1, used, limit);
 }
 
+/*
+ * Revision 18: framework evidence straight from the guest /data filesystem.
+ * RenderService/foundation HiLog is dictionary-encoded and hidumper refuses a
+ * process without an access token, but faultloggerd writes plain-text crash
+ * reports, BMS creates one directory per installed bundle, and the account
+ * service keeps small JSON state files.  Read-only, size-bounded, no symlinks.
+ */
+static void record_file_head(int output, size_t *used, size_t limit, const char *path, size_t head)
+{
+    int fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+    struct stat st;
+    if (fd < 0 || fstat(fd, &st) || !S_ISREG(st.st_mode)) {
+        char text[600];
+        int length = snprintf(text, sizeof(text), "[%s unreadable: errno=%d]\n", path, errno);
+        append_native_log(output, text, length, used, limit);
+        if (fd >= 0) close(fd);
+        return;
+    }
+    char text[700];
+    int length = snprintf(text, sizeof(text), "== %s (%lld bytes) ==\n", path, (long long)st.st_size);
+    append_native_log(output, text, length, used, limit);
+    char buffer[4096];
+    size_t copied = 0;
+    while (copied < head) {
+        size_t want = head - copied < sizeof(buffer) ? head - copied : sizeof(buffer);
+        ssize_t count = read(fd, buffer, want);
+        if (count <= 0) break;
+        append_native_log(output, buffer, count, used, limit);
+        copied += count;
+    }
+    close(fd);
+    append_native_log(output, "\n", 1, used, limit);
+}
+
+static void record_directory(int output, size_t *used, size_t limit, const char *directory, bool contents,
+                             unsigned max_files, size_t head, unsigned depth)
+{
+    DIR *dir = opendir(directory);
+    char text[700];
+    if (!dir) {
+        int length = snprintf(text, sizeof(text), "[%s unreadable: errno=%d]\n", directory, errno);
+        append_native_log(output, text, length, used, limit);
+        return;
+    }
+    struct dirent *entry;
+    unsigned listed = 0;
+    while ((entry = readdir(dir)) && listed < max_files && *used < limit) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        char path[512];
+        if (snprintf(path, sizeof(path), "%s/%s", directory, entry->d_name) >= (int)sizeof(path)) continue;
+        struct stat st;
+        if (lstat(path, &st)) continue;
+        ++listed;
+        if (S_ISDIR(st.st_mode) && contents && depth) {
+            record_directory(output, used, limit, path, true, max_files, head, depth - 1);
+        } else if (S_ISREG(st.st_mode) && contents) {
+            record_file_head(output, used, limit, path, head);
+        } else {
+            int length = snprintf(text, sizeof(text), "%s%s\n", entry->d_name, S_ISDIR(st.st_mode) ? "/" : "");
+            append_native_log(output, text, length, used, limit);
+        }
+    }
+    closedir(dir);
+    int length = snprintf(text, sizeof(text), "[%s: %u entr%s shown]\n", directory, listed, listed == 1 ? "y" : "ies");
+    append_native_log(output, text, length, used, limit);
+}
+
+static void record_data_evidence(int output, size_t *used, size_t limit)
+{
+    const char heading[] = "\n--- guest /data framework evidence ---\n";
+    append_native_log(output, heading, sizeof(heading) - 1, used, limit);
+    const char bundles[] = "\n[installed bundles: /data/app/el1/bundle/public]\n";
+    append_native_log(output, bundles, sizeof(bundles) - 1, used, limit);
+    record_directory(output, used, limit, "/data/app/el1/bundle/public", false, 400, 0, 0);
+    const char accounts[] = "\n[account service state]\n";
+    append_native_log(output, accounts, sizeof(accounts) - 1, used, limit);
+    record_directory(output, used, limit, "/data/service/el1/public/account", true, 24, 6144, 2);
+    const char faults[] = "\n[fault logs]\n";
+    append_native_log(output, faults, sizeof(faults) - 1, used, limit);
+    record_directory(output, used, limit, "/data/log/faultlog/faultlogger", true, 16, 12288, 0);
+    record_directory(output, used, limit, "/data/log/faultlog/temp", true, 16, 12288, 0);
+}
+
 static void record_ui_processes(int output, size_t *used, size_t limit)
 {
     const char *names[] = {"render_service", "bootanimation", "hdf_devmgr", "hdf_devhost",
@@ -366,14 +449,12 @@ struct hilog_snapshot {
  * DisplayManager SA 3203; IDs confirmed by revision 14 SAMGR DeadSA records).
  * Most RenderService HiLog text is dictionary-encoded and unreadable here.
  */
-enum { SNAPSHOT_HILOG_ERRORS, SNAPSHOT_HILOG_GRAPHICS, SNAPSHOT_SA_LIST, SNAPSHOT_RS_SCREEN,
-       SNAPSHOT_RS_SURFACE, SNAPSHOT_DMS, SNAPSHOT_KINDS };
+enum { SNAPSHOT_HILOG_ERRORS, SNAPSHOT_HILOG_GRAPHICS, SNAPSHOT_PARAMS, SNAPSHOT_DATA, SNAPSHOT_KINDS };
 
 static const char *snapshot_title(unsigned kind)
 {
     static const char *const titles[SNAPSHOT_KINDS] = {"HiLog warning/error", "HiLog graphics info/warning/error",
-        "hidumper registered system abilities", "hidumper RenderService screen",
-        "hidumper RenderService surface", "hidumper DisplayManager"};
+        "system parameters", "guest /data evidence"};
     return kind < SNAPSHOT_KINDS ? titles[kind] : "unknown";
 }
 
@@ -399,7 +480,6 @@ static int start_hilog_snapshot(struct hilog_snapshot *snapshot, const char *bin
         close(0);
         if (syscall(__NR_close_range, 3U, ~0U, 0)) _exit(126);
         // -z is already nonblocking; this donor rejects combining it with -x.
-        const char *dumper = "/system/bin/hidumper";
         switch (kind) {
         case SNAPSHOT_HILOG_GRAPHICS:
             execl(binary, "hilog", "-L", "I,W,E,F", "-T", "DISP,OP13Gralloc,SweetHAL,MAPPER_SRV", "-z", "1000", NULL);
@@ -407,10 +487,7 @@ static int start_hilog_snapshot(struct hilog_snapshot *snapshot, const char *bin
         case SNAPSHOT_HILOG_ERRORS:
             execl(binary, "hilog", "-L", "W,E,F", "-z", "2000", NULL);
             break;
-        case SNAPSHOT_SA_LIST: execl(dumper, "hidumper", "-ls", NULL); break;
-        case SNAPSHOT_RS_SCREEN: execl(dumper, "hidumper", "-s", "10", "-a", "screen", NULL); break;
-        case SNAPSHOT_RS_SURFACE: execl(dumper, "hidumper", "-s", "10", "-a", "surface", NULL); break;
-        case SNAPSHOT_DMS: execl(dumper, "hidumper", "-s", "3203", "-a", "-a", NULL); break;
+        case SNAPSHOT_PARAMS: execl("/system/bin/param", "param", "get", NULL); break;
         default: errno = EINVAL; break;
         }
         dprintf(2, "diagnostic query %u exec failed: errno=%d\n", kind, errno);
@@ -475,7 +552,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 17; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 18; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -485,10 +562,10 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
         {10000, SNAPSHOT_HILOG_ERRORS}, {11000, SNAPSHOT_HILOG_GRAPHICS},
         {15000, SNAPSHOT_HILOG_ERRORS}, {16000, SNAPSHOT_HILOG_GRAPHICS},
         {25000, SNAPSHOT_HILOG_ERRORS}, {26000, SNAPSHOT_HILOG_GRAPHICS},
-        {35000, SNAPSHOT_SA_LIST}, {36000, SNAPSHOT_RS_SCREEN}, {37000, SNAPSHOT_RS_SURFACE}, {38000, SNAPSHOT_DMS},
+        {60000, SNAPSHOT_DATA},
         {45000, SNAPSHOT_HILOG_ERRORS}, {46000, SNAPSHOT_HILOG_GRAPHICS},
         {90000, SNAPSHOT_HILOG_ERRORS}, {91000, SNAPSHOT_HILOG_GRAPHICS},
-        {100000, SNAPSHOT_RS_SCREEN}, {101000, SNAPSHOT_RS_SURFACE}, {102000, SNAPSHOT_DMS},
+        {120000, SNAPSHOT_PARAMS}, {125000, SNAPSHOT_DATA},
         {150000, SNAPSHOT_HILOG_ERRORS}, {151000, SNAPSHOT_HILOG_GRAPHICS},
         {175000, SNAPSHOT_HILOG_ERRORS}, {176000, SNAPSHOT_HILOG_GRAPHICS}};
     size_t next_snapshot = 0;
@@ -549,7 +626,9 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
             unsigned kind = snapshot_times[next_snapshot].kind;
             snprintf(title, sizeof(title), "\n--- %s snapshot at %lld ms ---\n", snapshot_title(kind), now - start);
             append_native_log(output, title, strlen(title), &used, limit);
-            if (start_hilog_snapshot(&snapshot, "/system/bin/hilog", kind >= SNAPSHOT_SA_LIST ? 5000 : 3000, kind)) {
+            if (kind == SNAPSHOT_DATA) {
+                record_data_evidence(output, &used, limit);
+            } else if (start_hilog_snapshot(&snapshot, "/system/bin/hilog", kind == SNAPSHOT_PARAMS ? 5000 : 3000, kind)) {
                 snprintf(title, sizeof(title), "diagnostic query unavailable: errno=%d\n", errno);
                 append_native_log(output, title, strlen(title), &used, limit);
             }
@@ -584,9 +663,13 @@ static int start_native_recorder(void)
         if (dup2(input, 0) < 0 || dup2(native_log, 1) < 0 || dup2(status_pipe[0], 2) < 0 ||
             syscall(__NR_close_range, 3U, ~0U, 0)) _exit(120);
         prctl(PR_SET_NAME, "hmos-native-log", 0, 0, 0);
-        for (unsigned cap = 0; cap <= 63; ++cap) prctl(PR_CAPBSET_DROP, cap, 0, 0, 0);
+        // Only read-only DAC bypass survives, for service-owned crash reports
+        // and state files; nothing grants write, mount, module or reboot access.
+        for (unsigned cap = 0; cap <= 63; ++cap)
+            if (cap != CAP_DAC_READ_SEARCH) prctl(PR_CAPBSET_DROP, cap, 0, 0, 0);
         struct __user_cap_header_struct header = {_LINUX_CAPABILITY_VERSION_3, 0};
         struct __user_cap_data_struct capabilities[2] = {{0}, {0}};
+        capabilities[0].effective = capabilities[0].permitted = 1U << CAP_DAC_READ_SEARCH;
         if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) || syscall(__NR_capset, &header, capabilities)) _exit(121);
         native_record_loop(0, 1, 2, 180000, NATIVE_LOG_LIMIT);
         _exit(0);
@@ -1212,7 +1295,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 17; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 18; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
