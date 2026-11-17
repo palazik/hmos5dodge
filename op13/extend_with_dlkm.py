@@ -16,6 +16,7 @@ from param_config import write_config as write_param_config
 from hdf_hosts import validate as validate_hdf_hosts
 from graphics_runtime import stage_validated as stage_graphics
 from boot_animation import install as install_boot_animation
+from init_plugins import install as install_init_plugins
 
 
 def main():
@@ -83,6 +84,7 @@ def main():
     validate_hdf_hosts(stage / 'hmos/startup', startup or report['startup_configuration'])
     stage_graphics(root, stage)
     boot_animation = install_boot_animation(root, stage)
+    init_plugins = install_init_plugins(root, stage)
     write_load_plan(root, stage, dlkm)
     (stage / 'system/lib').mkdir(exist_ok=True)
     link = stage / 'system/lib/modules'
@@ -162,7 +164,7 @@ def main():
     updated.update({'partitions': records, 'zip': package, 'component_validation': components, 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 18, 'selinux_mode_changed': False,
+        'handoff_revision': 19, 'selinux_mode_changed': False,
         'native_graphics_runtime': components['native_graphics_runtime'],
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,
@@ -184,6 +186,7 @@ def main():
         'dlkm_inputs': dlkm['images'], 'module_load_plan': dlkm['load_plan'],
         'dlkm_audit_scope': dlkm['scope'], 'captured_vendor_modules_byte_identical': dlkm['captured_vendor_modules_byte_identical']})
     updated['boot_animation'] = boot_animation
+    updated['init_plugins'] = init_plugins
     updated['module_audit'] = {key: dlkm[key] for key in ('scope', 'vendor_boot', 'payload_properties',
         'crc_checks', 'load_plan_sources', 'vendor_base_sha256', 'display_suppliers', 'stock_load_order') if key in dlkm}
     if startup:

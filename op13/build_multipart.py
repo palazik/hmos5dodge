@@ -15,6 +15,7 @@ from param_config import write_config as write_param_config
 from hdf_hosts import validate as validate_hdf_hosts
 from graphics_runtime import stage_validated as stage_graphics
 from boot_animation import install as install_boot_animation
+from init_plugins import install as install_init_plugins
 
 
 def digest(path):
@@ -189,8 +190,7 @@ def main():
         shutil.copyfile(workspace / 'out/op13-display' / name, stage / 'hmos/display' / name)
     for name in ('policy.31', 'developer_policy'):
         shutil.copyfile(workspace / 'out/op13-policy' / name, stage / 'hmos/policy' / name)
-    for name in ('libselinuxadp.z.so', 'libinit_context.z.so'):
-        shutil.copyfile(workspace / 'work/inspect/system/system/lib64/init' / name, stage / 'hmos/init-modules' / name)
+    init_plugins = install_init_plugins(workspace, stage)
     storage = stage / 'system/bin/storage_daemon'
     shutil.copyfile(workspace / 'work/inspect/system/system/bin/storage_daemon', storage)
     previous = subprocess.check_output(['patchelf', '--print-needed', str(storage)], text=True).splitlines()
@@ -273,7 +273,7 @@ def main():
     report = {'status': 'experimental-op13-only-multipart-dsu', 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 18, 'boot_animation': boot_animation, 'selinux_mode_changed': False,
+        'handoff_revision': 19, 'boot_animation': boot_animation, 'init_plugins': init_plugins, 'selinux_mode_changed': False,
         'native_graphics_runtime': validation['native_graphics_runtime'],
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,
