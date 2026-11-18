@@ -552,7 +552,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 22; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 23; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -1025,7 +1025,11 @@ static void copy_device(const char *suffix, bool required)
             fatal(target);
     }
     if (!strncmp(suffix, "dri/", 4)) {
-        if (chown(target, 0, 1003) || chmod(target, 0660)) fatal("DRM device ownership");
+        // Donor /system/etc/ueventd.config: /dev/dri/card0 and renderD128 are
+        // 0666 root:1003.  0660 locked render_service (uid 1003, other gid)
+        // out: revision 22 "EGL: failed to open /dev/dri/card0: Permission
+        // denied", eglInitialize failure and a crash loop in SetUpGpuContext.
+        if (chown(target, 0, 1003) || chmod(target, 0666)) fatal("DRM device ownership");
     }
     devices[device_count++] = (struct device){major(st.st_rdev), minor(st.st_rdev)};
 }
@@ -1295,7 +1299,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 22; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 23; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
