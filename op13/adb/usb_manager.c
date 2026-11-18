@@ -72,12 +72,16 @@ static bool controller(char *name, size_t size)
 
 static void drop_daemon_privileges(void)
 {
-    // Authenticated shells stay UID 0 for guest logs, with an empty capability
-    // bounding set. They cannot gain mount/module/reboot/raw-I/O capabilities.
+    // Authenticated shells stay UID 0 for guest diagnostics with only read-only
+    // capabilities: DAC_READ_SEARCH (service-owned logs) and SYSLOG (kernel
+    // log).  No mount/module/reboot/raw-I/O/write-override capability.
     for (int cap = 0; cap <= 63; ++cap)
-        if (prctl(PR_CAPBSET_DROP, cap, 0, 0, 0) && errno != EINVAL) _exit(120);
+        if (cap != CAP_DAC_READ_SEARCH && cap != CAP_SYSLOG &&
+            prctl(PR_CAPBSET_DROP, cap, 0, 0, 0) && errno != EINVAL) _exit(120);
     struct __user_cap_header_struct header = {_LINUX_CAPABILITY_VERSION_3, 0};
     struct __user_cap_data_struct data[2] = {{0}, {0}};
+    data[0].effective = data[0].permitted = data[0].inheritable = 1U << CAP_DAC_READ_SEARCH;
+    data[1].effective = data[1].permitted = data[1].inheritable = 1U << (CAP_SYSLOG - 32);
     if (syscall(SYS_capset, &header, data) || prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0)) _exit(121);
 }
 

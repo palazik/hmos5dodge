@@ -262,7 +262,7 @@ int main(int argc, char **argv)
             assert(!strcmp(argv[2], "W,E,F") && !strcmp(argv[3], "-z") && !strcmp(argv[4], "2000"));
         else
             assert(!strcmp(argv[2], "I,W,E,F") && !strcmp(argv[3], "-T") &&
-                !strcmp(argv[4], "DISP,OP13Gralloc,SweetHAL,MAPPER_SRV") &&
+                !strcmp(argv[4], "DISP,OP13Gralloc,SweetHAL,MAPPER_SRV,MESA,OpenGLWrapper") &&
                 !strcmp(argv[5], "-z") && !strcmp(argv[6], "1000"));
         errno = 0;
         assert(fcntl(0, F_GETFD) == -1 && errno == EBADF);

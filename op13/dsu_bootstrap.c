@@ -389,6 +389,11 @@ static void record_data_evidence(int output, size_t *used, size_t limit)
     const char accounts[] = "\n[account service state]\n";
     append_native_log(output, accounts, sizeof(accounts) - 1, used, limit);
     record_directory(output, used, limit, "/data/service/el1/public/account", true, 24, 6144, 2);
+    const char input[] = "\n[kernel input devices]\n";
+    append_native_log(output, input, sizeof(input) - 1, used, limit);
+    record_file_head(output, used, limit, "/proc/bus/input/devices", 24576);
+    record_directory(output, used, limit, "/dev/input", false, 64, 0, 0);
+    record_file_head(output, used, limit, "/data/hmos-port/adb.log", 8192);
     const char faults[] = "\n[fault logs]\n";
     append_native_log(output, faults, sizeof(faults) - 1, used, limit);
     record_directory(output, used, limit, "/data/log/faultlog/faultlogger", true, 16, 12288, 0);
@@ -449,12 +454,13 @@ struct hilog_snapshot {
  * DisplayManager SA 3203; IDs confirmed by revision 14 SAMGR DeadSA records).
  * Most RenderService HiLog text is dictionary-encoded and unreadable here.
  */
-enum { SNAPSHOT_HILOG_ERRORS, SNAPSHOT_HILOG_GRAPHICS, SNAPSHOT_PARAMS, SNAPSHOT_DATA, SNAPSHOT_KINDS };
+enum { SNAPSHOT_HILOG_ERRORS, SNAPSHOT_HILOG_GRAPHICS, SNAPSHOT_PARAMS, SNAPSHOT_DATA, SNAPSHOT_HILOG_INPUT,
+       SNAPSHOT_KINDS };
 
 static const char *snapshot_title(unsigned kind)
 {
     static const char *const titles[SNAPSHOT_KINDS] = {"HiLog warning/error", "HiLog graphics info/warning/error",
-        "system parameters", "guest /data evidence"};
+        "system parameters", "guest /data evidence", "HiLog multimodalinput info/warning/error"};
     return kind < SNAPSHOT_KINDS ? titles[kind] : "unknown";
 }
 
@@ -482,12 +488,17 @@ static int start_hilog_snapshot(struct hilog_snapshot *snapshot, const char *bin
         // -z is already nonblocking; this donor rejects combining it with -x.
         switch (kind) {
         case SNAPSHOT_HILOG_GRAPHICS:
-            execl(binary, "hilog", "-L", "I,W,E,F", "-T", "DISP,OP13Gralloc,SweetHAL,MAPPER_SRV", "-z", "1000", NULL);
+            execl(binary, "hilog", "-L", "I,W,E,F", "-T", "DISP,OP13Gralloc,SweetHAL,MAPPER_SRV,MESA,OpenGLWrapper",
+                  "-z", "1000", NULL);
             break;
         case SNAPSHOT_HILOG_ERRORS:
             execl(binary, "hilog", "-L", "W,E,F", "-z", "2000", NULL);
             break;
         case SNAPSHOT_PARAMS: execl("/system/bin/param", "param", "get", NULL); break;
+        case SNAPSHOT_HILOG_INPUT:  // multimodalinput domains C02800-C02805 (device setup is info-level)
+            execl(binary, "hilog", "-L", "I,W,E,F", "-D", "0xD002800,0xD002801,0xD002802,0xD002803,0xD002805",
+                  "-z", "1500", NULL);
+            break;
         default: errno = EINVAL; break;
         }
         dprintf(2, "diagnostic query %u exec failed: errno=%d\n", kind, errno);
@@ -552,7 +563,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 24; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 25; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -565,7 +576,8 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
         {60000, SNAPSHOT_DATA},
         {45000, SNAPSHOT_HILOG_ERRORS}, {46000, SNAPSHOT_HILOG_GRAPHICS},
         {90000, SNAPSHOT_HILOG_ERRORS}, {91000, SNAPSHOT_HILOG_GRAPHICS},
-        {120000, SNAPSHOT_PARAMS}, {125000, SNAPSHOT_DATA},
+        {92000, SNAPSHOT_HILOG_INPUT},
+        {120000, SNAPSHOT_PARAMS}, {125000, SNAPSHOT_DATA}, {130000, SNAPSHOT_HILOG_INPUT},
         {150000, SNAPSHOT_HILOG_ERRORS}, {151000, SNAPSHOT_HILOG_GRAPHICS},
         {175000, SNAPSHOT_HILOG_ERRORS}, {176000, SNAPSHOT_HILOG_GRAPHICS}};
     size_t next_snapshot = 0;
@@ -641,6 +653,31 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
     stop_hilog_snapshot(&snapshot);
     if (snapshot.child) waitpid(snapshot.child, NULL, WNOHANG);
     fdatasync(output);
+}
+
+/*
+ * Revision 25: authenticated USB ADB for live diagnostics.  Started once in the
+ * guest root, after the pivot, while the bootstrap still holds CAP_SYS_ADMIN
+ * (configfs/functionfs mounts).  The manager builds its own gadget, never the
+ * stock g1, and its failure never affects native init.  adbd itself runs with
+ * only read-only diagnostic capabilities (see op13/adb/usb_manager.c).
+ */
+static void start_usb_adb(void)
+{
+    if (access("/system/bin/hmos-usb-manager", X_OK)) {
+        log_line("ADB manager not installed");
+        return;
+    }
+    pid_t child = fork();
+    if (child < 0) { log_line("ADB manager fork failed: errno=%d", errno); return; }
+    if (!child) {
+        if (syscall(__NR_close_range, 3U, ~0U, 0)) _exit(125);
+        char *const args[] = {"/system/bin/hmos-usb-manager", NULL};
+        char *const environment[] = {"PATH=/system/bin:/vendor/bin", NULL};
+        execve(args[0], args, environment);
+        _exit(126);
+    }
+    log_line("ADB manager started (pid %d); log /data/hmos-port/adb.log", child);
 }
 
 static int start_native_recorder(void)
@@ -1299,7 +1336,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 24; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 25; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
@@ -1430,6 +1467,7 @@ int main(int argc, char **argv)
     log_line("executing full donor init --second-stage; framework/SceneBoard target");
     pivot_native_root();
     int handoff_status = start_native_recorder();
+    start_usb_adb();
     // Only the close-on-exec error pipe may survive until execve. The native
     // graph inherits neither metadata logs nor old-root/block descriptors.
     kmsg = bootlog = metalog = -1;
@@ -1452,7 +1490,10 @@ int main(int argc, char **argv)
     if (output > 2) close(output);
     // No old-root directory fd or block fd is inherited by the native graph.
     char *const init_args[] = {"/system/bin/init", "--second-stage", "0", NULL};
-    char *const environment[] = {"PATH=/system/bin:/vendor/bin", "OHOS_MESA_SOFTWARE=true", NULL};
+    // Revision 25: no OHOS_MESA_SOFTWARE.  The vendor libEGL_impl then tries
+    // "Adreno GPU (freedreno on kgsl)" through /dev/kgsl-3d0 first and falls
+    // back to kms_swrast by itself if the kgsl screen cannot be created.
+    char *const environment[] = {"PATH=/system/bin:/vendor/bin", NULL};
     execve(init_args[0], init_args, environment);
     int exec_error = errno;
     if (handoff_status >= 0) { write(handoff_status, &exec_error, sizeof(exec_error)); close(handoff_status); }

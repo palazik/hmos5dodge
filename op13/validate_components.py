@@ -105,6 +105,10 @@ def main():
     tests.append(run('code-sign-shim-build', ['bash', 'build/ohos-clang', '-O2', '-fPIC', '-Wall', '-Wextra', '-Werror',
         '-shared', 'op13/code_sign_compat.c', '-Wl,-soname,libop13_code_sign.so', '-Wl,--no-undefined',
         '-ldl', '-lc', '-o', compat / 'libop13_code_sign.so'], env=environment))
+    adb = WORKSPACE / 'out/op13-adb'
+    adb.mkdir(parents=True, exist_ok=True)
+    tests.append(run('adb-usb-manager-build', ['bash', 'build/ohos-clang', '-O2', '-Wall', '-Wextra', '-Werror',
+        'op13/adb/usb_manager.c', '-o', adb / 'hmos-usb-manager'], env=environment))
     tests.append(run('storage-test-build', ['bash', 'build/ohos-clang', '-O2', '-Wall', '-Wextra', '-Werror',
         'op13/local_storage_test.c', '-L' + str(storage), '-lop13_local_storage', '-lc',
         '-o', storage / 'storage-test'], env=environment))
@@ -174,6 +178,7 @@ def main():
     tests.append(run('startup-audit-regressions', ['python3', '-m', 'unittest', 'discover', '-s', 'op13', '-p', 'test_*.py']))
     image.unlink()
     artifacts = [bootstrap / 'init', storage / 'libop13_local_storage.so', compat / 'libop13_code_sign.so',
+        adb / 'hmos-usb-manager', adb / 'hmos-adbd',
         display / 'libdisplay_buffer_vdi_impl.z.so', display / 'libdisplay_composer_vdi_impl.z.so',
         WORKSPACE / 'out/op13-policy/policy.31', WORKSPACE / 'out/op13-policy/developer_policy']
     artifacts.extend(p for p in startup.rglob('*') if p.is_file() and not p.is_symlink())
