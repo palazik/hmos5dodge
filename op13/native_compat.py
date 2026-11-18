@@ -22,7 +22,19 @@ SHIM_BUILD = 'out/op13-compat/' + SHIM
 INSTALLER = 'system/lib64/libinstalls.z.so'
 DONOR_INSTALLER = 'work/inspect/system/system/lib64/libinstalls.z.so'
 ENV_CFG = 'hmos/startup/system-init/op13_compat_env.cfg'
-ENV = {'jobs': [{'name': 'pre-init', 'cmds': ['export UV_USE_IO_URING 0']}]}
+# 3. Graphics API.  Revision 21: with CPU-mappable buffers RenderService got
+#    to render and crashed (SIGSEGV, pc 0) in RSSurfaceOhosVulkan::RequestFrame
+#    -> NativeBufferUtils::MakeFromNativeWindowBuffer: the phone variant layer
+#    sets persist.sys.graphic.GpuApitype=1 (Vulkan), and there is no Vulkan
+#    driver.  0 selects the GLES backend (software Mesa EGL), as the
+#    hmos2sweet reference port forces with the same triggers.
+GPU_API = 'persist.sys.graphic.GpuApitype'
+ENV = {'jobs': [
+    {'name': 'pre-init', 'cmds': ['export UV_USE_IO_URING 0']},
+    {'name': 'post-fs-data', 'cmds': ['setparam ' + GPU_API + ' 0']},
+    {'name': 'param:' + GPU_API + '=1', 'condition': GPU_API + '=1', 'cmds': ['setparam ' + GPU_API + ' 0']},
+    {'name': 'param:' + GPU_API + '=2', 'condition': GPU_API + '=2', 'cmds': ['setparam ' + GPU_API + ' 0']},
+]}
 LABELS = [('/system/lib64/libop13_code_sign\\.so', 'system_lib_file')]
 
 
