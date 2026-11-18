@@ -6,12 +6,14 @@
  * scanned out by the composer (PRIME import + KMS) and mapped for CPU rendering
  * (software Mesa, software video decode).
  *
- * Revision 21: msm_drm DRM dumb buffers exported through PRIME cannot be
- * mmap'ed (revision 20: RenderService "mmap fd .. size 18653184 failed: 22"
- * for every full-screen 1440x3168 RGBA buffer), so nothing was ever drawn.
- * System-heap dma-bufs support mmap and are imported by msm_drm for scanout,
- * as Qualcomm gralloc does.  The dumb-buffer path stays as a fallback only
- * when no heap is available.
+ * Revision 20: msm_drm dumb buffers exported through PRIME cannot be mmap'ed
+ * as dma-bufs ("mmap fd .. size 18653184 failed: 22").  Revision 21 moved to
+ * system-heap dma-bufs; revision 23 then hard-froze the phone (watchdog reset)
+ * 0.13 s after the first modeset that could scan one out.  Dumb buffers are
+ * proven safe for scanout (revision 12 committed real frames, frame_done, no
+ * hang), so revision 24 allocates dumb buffers again and maps them for the CPU
+ * through the DRM device (PRIME import + DRM_IOCTL_MODE_MAP_DUMB), the
+ * documented way to CPU-map dumb buffers.  The heap path is kept but off.
  *
  * Interface: OpenHarmony 5.0.x IDisplayBufferVdi (vtable verified against the
  * HarmonyOS 5.0.5 vendor library).  License: Apache-2.0
@@ -119,6 +121,8 @@ int DrmFd()
     return fd;
 }
 
+constexpr bool USE_SYSTEM_HEAP = false; /* see the revision 23 freeze above */
+
 int HeapFd()
 {
     static int fd = -1;
@@ -143,6 +147,38 @@ struct MetaKey {
     bool operator<(const MetaKey &o) const { return dev != o.dev ? dev < o.dev : ino < o.ino; }
 };
 
+/* CPU-map a dumb buffer received as a PRIME fd: import it into this process's
+ * DRM file, ask for its fake mmap offset, map, then drop the handle (the
+ * mapping keeps the GEM object alive). */
+void *MapDumb(const BufferHandle &bh)
+{
+    int drm = DrmFd();
+    if (drm < 0 || bh.size <= 0) {
+        return nullptr;
+    }
+    uint32_t gem = 0;
+    if (drmPrimeFDToHandle(drm, bh.fd, &gem) != 0) {
+        SLOGE("map_dumb: PRIME import of fd %{public}d failed: %{public}d", bh.fd, errno);
+        return nullptr;
+    }
+    struct drm_mode_map_dumb map = {};
+    map.handle = gem;
+    void *p = nullptr;
+    if (drmIoctl(drm, DRM_IOCTL_MODE_MAP_DUMB, &map) == 0) {
+        p = mmap(nullptr, bh.size, PROT_READ | PROT_WRITE, MAP_SHARED, drm, static_cast<off_t>(map.offset));
+        if (p == MAP_FAILED) {
+            SLOGE("map_dumb: mmap offset %{public}llu failed: %{public}d", (unsigned long long)map.offset, errno);
+            p = nullptr;
+        }
+    } else {
+        SLOGE("map_dumb: MAP_DUMB failed: %{public}d", errno);
+    }
+    struct drm_gem_close close_gem = {};
+    close_gem.handle = gem;
+    drmIoctl(drm, DRM_IOCTL_GEM_CLOSE, &close_gem);
+    return p;
+}
+
 class SweetBufferVdi : public IDisplayBufferVdi {
 public:
     int32_t AllocMem(const AllocInfo &info, BufferHandle *&handle) const override
@@ -155,7 +191,7 @@ public:
         /* width aligned to 64 px (Adreno a6xx needs >= 64-byte pitch alignment), height covers all planes */
         uint32_t alignedW = (info.width + 63) & ~63u;
         uint32_t allocH = (info.height * fi.heightNum + fi.heightDen - 1) / fi.heightDen;
-        int heap = HeapFd();
+        int heap = USE_SYSTEM_HEAP ? HeapFd() : -1;
         if (heap >= 0) {
             uint64_t pitch = static_cast<uint64_t>(alignedW) * fi.bitsPerPixel / 8;
             uint64_t size = (pitch * allocH + 4095) & ~4095ull;
@@ -256,8 +292,14 @@ public:
         }
         void *p = mmap(nullptr, bh->size, PROT_READ | PROT_WRITE, MAP_SHARED, bh->fd, 0);
         if (p == MAP_FAILED) {
-            SLOGE("mmap fd %{public}d size %{public}d failed: %{public}d", bh->fd, bh->size, errno);
-            return nullptr;
+            /* Dumb buffer: map through the DRM device in this process. */
+            int saved = errno;
+            p = MapDumb(*bh);
+            if (p == nullptr) {
+                SLOGE("mmap fd %{public}d size %{public}d failed: %{public}d (dma-buf) and DRM map_dumb",
+                    bh->fd, bh->size, saved);
+                return nullptr;
+            }
         }
         bh->virAddr = p;
         return p;
