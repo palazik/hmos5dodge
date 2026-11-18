@@ -1,10 +1,17 @@
 /*
  * Display buffer VDI for HarmonyOS on OnePlus 13, adapted from sweet.
  *
- * Allocates graphics buffers as DRM "dumb" buffers on the msm DRM device
- * (/dev/dri/card0) and hands them out as dma-buf fds inside a BufferHandle.
- * The same fds are scanned out by the composer (PRIME import + KMS) and
- * rendered into by Mesa's software rasterizer (kms_swrast, PRIME import).
+ * Allocates graphics buffers from the system dma-heap (/dev/dma_heap/system)
+ * and hands them out as dma-buf fds inside a BufferHandle.  The same fds are
+ * scanned out by the composer (PRIME import + KMS) and mapped for CPU rendering
+ * (software Mesa, software video decode).
+ *
+ * Revision 21: msm_drm DRM dumb buffers exported through PRIME cannot be
+ * mmap'ed (revision 20: RenderService "mmap fd .. size 18653184 failed: 22"
+ * for every full-screen 1440x3168 RGBA buffer), so nothing was ever drawn.
+ * System-heap dma-bufs support mmap and are imported by msm_drm for scanout,
+ * as Qualcomm gralloc does.  The dumb-buffer path stays as a fallback only
+ * when no heap is available.
  *
  * Interface: OpenHarmony 5.0.x IDisplayBufferVdi (vtable verified against the
  * HarmonyOS 5.0.5 vendor library).  License: Apache-2.0
@@ -22,6 +29,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <linux/dma-buf.h>
+#include <linux/dma-heap.h>
 #include <xf86drm.h>
 #include <drm.h>
 #include <drm_mode.h>
@@ -111,6 +119,24 @@ int DrmFd()
     return fd;
 }
 
+int HeapFd()
+{
+    static int fd = -1;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        const char *heaps[] = {"/dev/dma_heap/system", "/dev/dma_heap/qcom,system"};
+        for (const char *h : heaps) {
+            fd = open(h, O_RDONLY | O_CLOEXEC);
+            if (fd >= 0) {
+                SLOGI("allocating from %{public}s", h);
+                break;
+            }
+            SLOGE("open %{public}s failed: %{public}d", h, errno);
+        }
+    });
+    return fd;
+}
+
 struct MetaKey {
     dev_t dev;
     ino_t ino;
@@ -126,13 +152,45 @@ public:
             SLOGE("unsupported alloc %{public}ux%{public}u fmt %{public}u", info.width, info.height, info.format);
             return DISPLAY_NOT_SUPPORT_;
         }
+        /* width aligned to 64 px (Adreno a6xx needs >= 64-byte pitch alignment), height covers all planes */
+        uint32_t alignedW = (info.width + 63) & ~63u;
+        uint32_t allocH = (info.height * fi.heightNum + fi.heightDen - 1) / fi.heightDen;
+        int heap = HeapFd();
+        if (heap >= 0) {
+            uint64_t pitch = static_cast<uint64_t>(alignedW) * fi.bitsPerPixel / 8;
+            uint64_t size = (pitch * allocH + 4095) & ~4095ull;
+            if (size == 0 || size > 0x7fffffffull) {
+                SLOGE("alloc %{public}ux%{public}u fmt %{public}u: size out of range", info.width, info.height, info.format);
+                return DISPLAY_PARAM_ERR_;
+            }
+            struct dma_heap_allocation_data data = {};
+            data.len = size;
+            data.fd_flags = O_RDWR | O_CLOEXEC;
+            if (ioctl(heap, DMA_HEAP_IOCTL_ALLOC, &data) != 0) {
+                SLOGE("heap alloc %{public}llu bytes failed: %{public}d", (unsigned long long)size, errno);
+                return DISPLAY_NOMEM_;
+            }
+            auto *bh = static_cast<BufferHandle *>(calloc(1, sizeof(BufferHandle)));
+            if (bh == nullptr) {
+                close(static_cast<int>(data.fd));
+                return DISPLAY_NOMEM_;
+            }
+            bh->fd = static_cast<int>(data.fd);
+            bh->width = static_cast<int32_t>(info.width);
+            bh->height = static_cast<int32_t>(info.height);
+            bh->stride = static_cast<int32_t>(pitch);
+            bh->size = static_cast<int32_t>(size);
+            bh->format = static_cast<int32_t>(info.format);
+            bh->usage = info.usage;
+            handle = bh;
+            SLOGI("heap alloc %{public}ux%{public}u fmt %{public}u -> fd %{public}d stride %{public}llu size %{public}llu",
+                info.width, info.height, info.format, bh->fd, (unsigned long long)pitch, (unsigned long long)size);
+            return DISPLAY_SUCCESS_;
+        }
         int drm = DrmFd();
         if (drm < 0) {
             return DISPLAY_FAILURE_;
         }
-        /* width aligned to 64 px (Adreno a6xx needs >= 64-byte pitch alignment), height covers all planes */
-        uint32_t alignedW = (info.width + 63) & ~63u;
-        uint32_t allocH = (info.height * fi.heightNum + fi.heightDen - 1) / fi.heightDen;
         struct drm_mode_create_dumb create = {};
         create.width = alignedW;
         create.height = allocH;

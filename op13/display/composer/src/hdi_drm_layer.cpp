@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 
+#include <linux/dma-buf.h>
+#include <sys/ioctl.h>
 #include "hdi_drm_layer.h"
 #include <mutex>
 #include <vector>
@@ -67,6 +69,13 @@ void DrmGemBuffer::Init(int drmFd, HdiLayerBuffer &hdl)
     uint32_t gemHandles[MAX_COUNT] = {0};
     uint32_t offsets[MAX_COUNT] = {0};
     DISPLAY_CHK_RETURN_NOT_VALUE((drmFd < 0), DISPLAY_LOGE("can not init drmfd %{public}d", drmFd));
+    /* System-heap buffers are CPU-cached: clean the CPU cache before the
+     * display controller reads this frame (no-op for uncached buffers). */
+    struct dma_buf_sync sync = {DMA_BUF_SYNC_END | DMA_BUF_SYNC_RW};
+    if (ioctl(hdl.GetFb(), DMA_BUF_IOCTL_SYNC, &sync) != 0) {
+        static bool logged;
+        if (!logged) { logged = true; DISPLAY_LOGE("dma-buf sync before scanout failed: %{public}d", errno); }
+    }
     mDrmFormat = DrmDevice::ConvertToDrmFormat(static_cast<PixelFormat>(hdl.GetFormat()));
     struct stat st;
     uint64_t ino = (fstat(hdl.GetFb(), &st) == 0) ? (uint64_t)st.st_ino : 0;
