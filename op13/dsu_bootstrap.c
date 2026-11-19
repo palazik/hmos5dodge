@@ -563,7 +563,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 28; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 29; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -1388,7 +1388,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 28; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 29; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
@@ -1564,7 +1564,13 @@ int main(int argc, char **argv)
     // Revision 25: no OHOS_MESA_SOFTWARE.  The vendor libEGL_impl then tries
     // "Adreno GPU (freedreno on kgsl)" through /dev/kgsl-3d0 first and falls
     // back to kms_swrast by itself if the kgsl screen cannot be created.
-    char *const environment[] = {"PATH=/system/bin:/vendor/bin", NULL};
+    // Revision 29: the kernel starts PID 1 with HOME=/ and TERM=linux, and
+    // HarmonyOS services inherit them.  The HMOS passwd entries have empty home
+    // directories (audio:x:1041:1041:::/bin/false), so without HOME PulseAudio in
+    // audio_server cannot find its config dir, loads no default.pa modules,
+    // refuses to start and audio_server _exit()s.  SA 3009 then never appears and
+    // SceneBoard's main thread blocks on it until the app-freeze watchdog kills it.
+    char *const environment[] = {"HOME=/", "TERM=linux", "PATH=/system/bin:/vendor/bin", NULL};
     execve(init_args[0], init_args, environment);
     int exec_error = errno;
     if (handoff_status >= 0) { write(handoff_status, &exec_error, sizeof(exec_error)); close(handoff_status); }
