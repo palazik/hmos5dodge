@@ -9,28 +9,33 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 
 ## Status
 
-**Revision 12 reaches display initialization, then the screen goes dark. Revision 13 adds the missing native buffer mappers.**
+**Revision 28 boots to the HarmonyOS UI with GPU rendering, the original boot animation and ADB. Revision 29 targets
+the remaining freezes and touch.** Revision 29 is not yet phone-tested.
 
-Native Binder/token checks and the runtime root fixes pass. The composer now
-reaches DRM-master checks and display discovery, but buffer-mapper loading fails
-and the kernel reports DSI timeouts. Revision 13 includes both donor mapper
-versions, verifies real CPU buffer mapping/release through their native HDI ABI,
-and adds bounded graphics information logs. Panel output remains unverified.
-See the [attempt-12 diagnosis](op13/ATTEMPT12.md) and
-[test instructions](op13/TESTING.md). A first HarmonyOS frame remains unproven.
-Only system.img changes from revision 12. The stock kernel Image, vendor_boot,
-working IPC module, all seven other images, native policy binaries and
-[userdata allocation logic](op13/DSU-DATA-INITIALIZATION.md) remain unchanged.
-Full framework boot on the phone remains unresolved.
+Working on the phone (revision 28):
 
-- Separate partition images and the DSU ZIP have been built and checked.
-- OP13 vendor contents, permissions, capabilities and symlinks are preserved.
-- The kernel Image stays stock; initial rendering uses software Mesa.
-- Display hardware, touch, GPU acceleration, connectivity and full framework
-  startup still need device testing.
-- The stale input HDF-host entry is removed; the existing Linux userspace
-  input backend has passed an isolated ARM64 initialization test. Phone touch
-  events and permissions remain unverified.
+- Boot through DSU to SceneBoard, with the stock kernel and full stock module set.
+- The original HarmonyOS boot video (audio track removed), unscaled.
+- GPU rendering: rebuilt Mesa 27 (freedreno/KGSL) on the Adreno 830, with GPU firmware loaded at boot.
+- ADB over USB (`hmos5dodge`), with the USB-C port forced into device role.
+- Buttons reach multimodalinput; the power key toggles the panel.
+
+Fixed in revision 29 (see [REVISION29.md](op13/REVISION29.md)):
+
+- SceneBoard was killed every ~30 s because audio_server crash-looped: PulseAudio needs `HOME`, which HarmonyOS init now
+  gets (`HOME=/`, as from the kernel).
+- libinput rejected the touchscreen for axes with `min == max == 0`; the bootstrap now widens them with `EVIOCSABS`.
+
+Still open:
+
+- Colors look wrong on the phone (cause not yet identified).
+- Vulkan for render_service: Turnip is built and registered, but render_service stays on GLES until the OHOS
+  native-buffer/surface extensions exist.
+- Sound, charging, sensors and USB-C detection need the ADSP/CDSP booted (no vendor `audio_host` yet).
+- hdc is disabled; ADB is used instead.
+
+Per-revision diagnoses are in `op13/REVISION*.md`; see also the [test instructions](op13/TESTING.md) and the
+[userdata allocation logic](op13/DSU-DATA-INITIALIZATION.md).
 
 ## Package layout
 

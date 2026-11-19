@@ -1,4 +1,4 @@
-# Revision 29: give HarmonyOS init the kernel's HOME so audio_server starts
+# Revision 29: give HarmonyOS init the kernel's HOME so audio_server starts; make libinput accept the touchscreen
 
 Not phone-tested when written (2026-11-19).
 
@@ -36,10 +36,16 @@ with only `PATH`.
 ## Change
 
 - **Bootstrap**: HarmonyOS init is exec'd with `HOME=/`, `TERM=linux` and `PATH=/system/bin:/vendor/bin`.
+- **Touch** (`fix_touch_axes()` in the bootstrap): ColorOS `getevent -p` shows `touchpanel` advertising ABS_PRESSURE,
+  0x21, 0x22, 0x23, ABS_MT_WIDTH_MAJOR and ABS_MT_PRESSURE with `min 0, max 0` (yet `dumpsys input` shows
+  ABS_MT_PRESSURE=8 and WIDTH_MAJOR=7). HarmonyOS libinput (`evdev_reject_device` → `evdev_check_min_max`) only tolerates
+  zero-range axes in ABS_MISC..ABS_MT_SLOT and otherwise rejects the device with "device has min == max", which is why
+  multimodalinput adopted the keys but never the touchscreen. Before the guest starts, the bootstrap now widens every
+  zero-range axis of direct multitouch devices with `EVIOCSABS` (pressure/size axes to 0..255, others to 0..1) and logs
+  `touch axes: …`.
 
 ## Still open
 
-- Touch adoption by multimodalinput: debug live with `/vendor/bin/getevent` over ADB.
 - Colors: need a description or photo.
 - Vulkan for render_service: Turnip needs the OHOS native-buffer and surface extensions before `GpuApitype=1`.
 - Sound: still no `audio_host` (vendor audio HDI); PulseAudio and the policy now run without output devices.

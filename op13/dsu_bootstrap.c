@@ -8,6 +8,10 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/input.h>
+#ifndef EVIOCGPROPBIT
+#define EVIOCGPROPBIT(len) _IOC(_IOC_READ, 'E', 0x09, len)
+#endif
 #include <linux/bpf.h>
 #include <linux/capability.h>
 #include <linux/fs.h>
@@ -712,6 +716,54 @@ static void force_usb_device_role(void)
     read_text(role, after, sizeof(after));
     after[strcspn(after, "\r\n")] = 0;
     log_line("USB role switch: %s -> device %s; now %s", current, ok ? "ok" : strerror(saved), after);
+}
+
+/*
+ * Revision 29: make the touchscreen acceptable to libinput.
+ * The OP13 Synaptics "touchpanel" advertises ABS_PRESSURE, 0x21-0x23,
+ * ABS_MT_WIDTH_MAJOR and ABS_MT_PRESSURE with min == max == 0 (it still reports
+ * pressure/width values).  Android ignores that, but HarmonyOS libinput
+ * (evdev_reject_device -> evdev_check_min_max) rejects any device with such an
+ * axis outside ABS_MISC..ABS_MT_SLOT, so multimodalinput never adopted touch
+ * while the keys worked.  Give each degenerate axis of direct multitouch
+ * devices a real range with EVIOCSABS before the guest opens them.
+ */
+static bool bit_set(const unsigned long *bits, unsigned bit)
+{
+    return bits[bit / (8 * sizeof(long))] & (1UL << (bit % (8 * sizeof(long))));
+}
+
+static void fix_touch_axes(void)
+{
+    DIR *inputs = opendir("/sys/class/input");
+    struct dirent *entry;
+    while (inputs && (entry = readdir(inputs))) {
+        if (strncmp(entry->d_name, "event", 5)) continue;
+        char relative[128], node[512], name[128] = "?";
+        snprintf(relative, sizeof(relative), "/dev/input/%.64s", entry->d_name);
+        rootpath(node, sizeof(node), relative);
+        int fd = open(node, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+        if (fd < 0) { log_line("touch axes: %s unavailable: errno=%d", relative, errno); continue; }
+        unsigned long props[(INPUT_PROP_CNT + 8 * sizeof(long) - 1) / (8 * sizeof(long))] = {0};
+        unsigned long abs[(ABS_CNT + 8 * sizeof(long) - 1) / (8 * sizeof(long))] = {0};
+        ioctl(fd, EVIOCGNAME(sizeof(name) - 1), name);
+        if (ioctl(fd, EVIOCGPROPBIT(sizeof(props)), props) < 0 || ioctl(fd, EVIOCGBIT(EV_ABS, sizeof(abs)), abs) < 0 ||
+            !bit_set(props, INPUT_PROP_DIRECT) || !bit_set(abs, ABS_MT_POSITION_X)) { close(fd); continue; }
+        unsigned fixed = 0, failed = 0;
+        for (unsigned code = 0; code < ABS_CNT; ++code) {
+            if (!bit_set(abs, code) || code == ABS_MISC || code == ABS_MT_SLOT || code == ABS_MT_TOOL_TYPE) continue;
+            struct input_absinfo info;
+            if (ioctl(fd, EVIOCGABS(code), &info) < 0 || info.minimum != info.maximum) continue;
+            bool scalar = code == ABS_PRESSURE || code == ABS_MT_PRESSURE || code == ABS_MT_TOUCH_MAJOR ||
+                          code == ABS_MT_TOUCH_MINOR || code == ABS_MT_WIDTH_MAJOR || code == ABS_MT_WIDTH_MINOR;
+            info.maximum = info.minimum + (scalar ? 255 : 1);
+            if (ioctl(fd, EVIOCSABS(code), &info) < 0) { ++failed; log_line("touch axes: %s abs 0x%02x errno=%d", name, code, errno); }
+            else ++fixed;
+        }
+        log_line("touch axes: %s (%s) %u degenerate axes widened, %u failed", name, relative, fixed, failed);
+        close(fd);
+    }
+    if (inputs) closedir(inputs);
 }
 
 static void start_usb_adb(void)
@@ -1486,6 +1538,7 @@ int main(int argc, char **argv)
     device_namespace();
     prime_gpu_firmware();
     force_usb_device_role();
+    fix_touch_axes();
     const char *brightness = "/sys/class/backlight/panel0-backlight/brightness";
     if (!access(brightness, F_OK)) {
         if (chown(brightness, 0, 1003) || chmod(brightness, 0660)) fatal("backlight ownership");
