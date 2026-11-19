@@ -74,7 +74,24 @@ static bool controller(char *name, size_t size)
         closedir(dir);
         if (!found && count == 1) { snprintf(name, size, "%s", first); found = true; }
         if (found) { fprintf(stderr, "ADB: using UDC %s (%u present)\n", name, count); return true; }
-        if (!attempt) fprintf(stderr, "ADB: %u UDC(s) present, none usable yet; waiting\n", count);
+        if (!attempt) {
+            fprintf(stderr, "ADB: %u UDC(s) present, none usable yet; waiting\n", count);
+            // Revision 27: on Qualcomm the dwc3 UDC only exists in device role.
+            // ColorOS shows a600000.ssusb-role-switch = device; nothing sets it
+            // in the guest, so request the device role on every role switch.
+            DIR *roles = opendir("/sys/class/usb_role");
+            struct dirent *role;
+            while (roles && (role = readdir(roles))) {
+                if (role->d_name[0] == '.') continue;
+                char path[512], current[64] = {0};
+                snprintf(path, sizeof(path), "/sys/class/usb_role/%s/role", role->d_name);
+                if (!read_value(path, current, sizeof(current))) continue;
+                bool ok = !strcmp(current, "device") || write_value(path, "device");
+                fprintf(stderr, "ADB: role switch %s was %s -> device %s\n", role->d_name, current,
+                        ok ? "ok" : strerror(errno));
+            }
+            if (roles) closedir(roles);
+        }
         usleep(500000);
     }
     return false;

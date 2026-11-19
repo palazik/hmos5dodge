@@ -19,6 +19,7 @@ from boot_animation import install as install_boot_animation
 from init_plugins import install as install_init_plugins
 from native_compat import install as install_native_compat, LABELS as COMPAT_LABELS
 from adb_payload import install as install_adb, LABELS as ADB_LABELS
+from mesa_runtime import install as install_mesa, LABELS as MESA_LABELS
 
 
 def main():
@@ -89,6 +90,7 @@ def main():
     init_plugins = install_init_plugins(root, stage)
     native_compat = install_native_compat(root, stage)
     adb = install_adb(root, stage)
+    mesa = install_mesa(root, stage)
     write_load_plan(root, stage, dlkm)
     (stage / 'system/lib').mkdir(exist_ok=True)
     link = stage / 'system/lib/modules'
@@ -105,7 +107,7 @@ def main():
         ('/hmos/init-modules(/.*)?', 'system_lib_file'), ('/system/bin/(init|hmos-native-init)', 'init_exec'),
         ('/system/bin/hmos-oobedone', 'system_bin_file'), ('/system/lib/modules', 'system_lib_file'),
         ('/system/etc/param/hdf_devmgr\\.para\\.dac', 'system_etc_file'),
-        ('/system/lib64/libop13_local_storage\\.so', 'system_lib_file')] + COMPAT_LABELS + ADB_LABELS)
+        ('/system/lib64/libop13_local_storage\\.so', 'system_lib_file')] + COMPAT_LABELS + ADB_LABELS + MESA_LABELS)
     key = output / 'development-key.pem'
     fd = os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, 'wb') as file:
@@ -168,7 +170,7 @@ def main():
     updated.update({'partitions': records, 'zip': package, 'component_validation': components, 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 26, 'selinux_mode_changed': False,
+        'handoff_revision': 27, 'selinux_mode_changed': False,
         'native_graphics_runtime': components['native_graphics_runtime'],
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,
@@ -193,6 +195,7 @@ def main():
     updated['init_plugins'] = init_plugins
     updated['native_compat'] = native_compat
     updated['adb'] = adb
+    updated['mesa'] = mesa
     updated['module_audit'] = {key: dlkm[key] for key in ('scope', 'vendor_boot', 'payload_properties',
         'crc_checks', 'load_plan_sources', 'vendor_base_sha256', 'display_suppliers', 'stock_load_order') if key in dlkm}
     if startup:

@@ -563,7 +563,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 26; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 27; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -1361,7 +1361,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 26; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 27; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
@@ -1474,6 +1474,23 @@ int main(int argc, char **argv)
     root_bind("/hmos/policy/developer_policy", "/vendor/etc/selinux/prebuild_sepolicy/developer_policy", true);
     root_bind("/hmos/display/libdisplay_buffer_vdi_impl.z.so", "/vendor/lib64/libdisplay_buffer_vdi_impl.z.so", true);
     root_bind("/hmos/display/libdisplay_composer_vdi_impl.z.so", "/vendor/lib64/libdisplay_composer_vdi_impl.z.so", true);
+    // Revision 27: rebuilt Mesa (A830-capable freedreno + Turnip on KGSL) over
+    // the vendor 26.1 copies, which faulted the GPU on their first submit.
+    {
+        const char *mesa[] = {"libEGL_impl.so", "libGLESv1_impl.so", "libGLESv2_impl.so", "libGLESv3_impl.so",
+                              "libgallium-26.1.0-devel.so"};
+        unsigned bound = 0;
+        for (size_t i = 0; i < sizeof(mesa) / sizeof(mesa[0]); ++i) {
+            char source[256], target[256], vendor_path[512];
+            snprintf(source, sizeof(source), "/hmos/display/mesa/%s", mesa[i]);
+            snprintf(target, sizeof(target), "/vendor/lib64/chipsetsdk/%s", mesa[i]);
+            rootpath(vendor_path, sizeof(vendor_path), target);
+            if (access(source, R_OK) || access(vendor_path, F_OK)) continue;
+            root_bind(source, target, true);
+            ++bound;
+        }
+        log_line("rebuilt Mesa bound over %u vendor GL libraries", bound);
+    }
     expose_graphics_runtime();
     root_bind("/hmos/ui/display_manager_config.xml", "/sys_prod/etc/window/resources/display_manager_config.xml", true);
     root_bind("/hmos/ui/hgm_policy_config.xml", "/sys_prod/etc/graphic/hgm_policy_config.xml", true);

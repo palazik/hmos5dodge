@@ -1,0 +1,1377 @@
+diff --color -ruN -x subprojects a/include/EGL/eglext.h b/include/EGL/eglext.h
+--- a/include/EGL/eglext.h	2026-11-18 07:43:49.000000000 +0500
++++ b/include/EGL/eglext.h	2026-11-19 17:42:32.247248607 +0500
+@@ -1523,6 +1523,16 @@
+ #endif
+ #endif /* EGL_WL_create_wayland_buffer_from_image */
+ 
++
++/* OpenHarmony/HarmonyOS native platform; value used by HarmonyOS libEGL.so. */
++#ifndef EGL_PLATFORM_OHOS_KHR
++#define EGL_PLATFORM_OHOS_KHR             0x34E0
++#endif
++/* EGLImage target for OH_NativeBuffer / NativeWindowBuffer (HarmonyOS render_service, libnative_image). */
++#ifndef EGL_NATIVE_BUFFER_OHOS
++#define EGL_NATIVE_BUFFER_OHOS            0x34E1
++#endif
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --color -ruN -x subprojects a/meson.build b/meson.build
+--- a/meson.build	2026-11-18 07:43:49.000000000 +0500
++++ b/meson.build	2026-11-19 17:29:38.088666854 +0500
+@@ -504,6 +504,10 @@
+ with_platform_haiku = _platforms.contains('haiku')
+ with_platform_windows = _platforms.contains('windows')
+ with_platform_macos = _platforms.contains('macos')
++with_platform_ohos = _platforms.contains('ohos')
++if with_platform_ohos
++  dep_ohos = [dependency('libsurface'), dependency('libhilog')]
++endif
+ 
+ with_gfxstream_emulated_android = with_gfxstream_vk and with_platform_android and host_machine.system() == 'linux'
+ if with_gfxstream_emulated_android
+@@ -530,7 +534,7 @@
+ if with_glx == 'auto'
+   if not with_opengl
+     with_glx = 'disabled'
+-  elif with_platform_android
++  elif with_platform_android or with_platform_ohos
+     with_glx = 'disabled'
+   elif with_dri
+     with_glx = 'dri'
+@@ -582,7 +586,7 @@
+ 
+ if with_egl
+   _platforms += 'surfaceless'
+-  if with_gbm and not with_platform_android
++  if with_gbm and not with_platform_android and not with_platform_ohos
+     _platforms += 'drm'
+   endif
+ 
+diff --color -ruN -x subprojects a/meson.options b/meson.options
+--- a/meson.options	2026-11-18 07:43:49.000000000 +0500
++++ b/meson.options	2026-11-19 17:30:25.052296570 +0500
+@@ -13,7 +13,7 @@
+   value : ['auto'],
+   choices : [
+     'auto', 'x11', 'wayland', 'haiku', 'android', 'windows', 'macos',
+-  ],
++   'ohos',],
+   description : 'window systems to support. If this is set to `auto`, all ' +
+                 'platforms applicable will be enabled.'
+ )
+@@ -23,7 +23,7 @@
+   type : 'combo',
+   value : 'auto',
+   choices : [
+-    'auto', 'x11', 'haiku', 'android', 'surfaceless',
++    'auto', 'x11', 'haiku', 'android', 'surfaceless', 'ohos',
+   ],
+   description : 'the window system EGL assumes for EGL_DEFAULT_DISPLAY',
+ )
+Binary files a/src/compiler/isaspec/__pycache__/isa.cpython-314.pyc and b/src/compiler/isaspec/__pycache__/isa.cpython-314.pyc differ
+Binary files a/src/compiler/nir/__pycache__/nir_algebraic.cpython-314.pyc and b/src/compiler/nir/__pycache__/nir_algebraic.cpython-314.pyc differ
+Binary files a/src/compiler/nir/__pycache__/nir_intrinsics.cpython-314.pyc and b/src/compiler/nir/__pycache__/nir_intrinsics.cpython-314.pyc differ
+Binary files a/src/compiler/nir/__pycache__/nir_opcodes.cpython-314.pyc and b/src/compiler/nir/__pycache__/nir_opcodes.cpython-314.pyc differ
+Binary files a/src/compiler/__pycache__/builtin_types.cpython-314.pyc and b/src/compiler/__pycache__/builtin_types.cpython-314.pyc differ
+diff --color -ruN -x subprojects a/src/egl/drivers/dri2/egl_dri2.c b/src/egl/drivers/dri2/egl_dri2.c
+--- a/src/egl/drivers/dri2/egl_dri2.c	2026-11-18 07:43:49.000000000 +0500
++++ b/src/egl/drivers/dri2/egl_dri2.c	2026-11-19 17:29:38.089196584 +0500
+@@ -645,8 +645,13 @@
+    unsigned caps = pscreen->caps.dmabuf;
+    dri2_dpy->has_dmabuf_import = (caps & DRM_PRIME_CAP_IMPORT) > 0;
+    dri2_dpy->has_dmabuf_export = (caps & DRM_PRIME_CAP_EXPORT) > 0;
++#ifdef HAVE_OHOS_PLATFORM
++   /* see dri_screen.c: KGSL cannot answer DRM_CAP_PRIME */
++   dri2_dpy->has_dmabuf_import = true;
++   dri2_dpy->has_dmabuf_export = true;
+ #endif
+-#ifdef HAVE_ANDROID_PLATFORM
++#endif
++#if defined(HAVE_ANDROID_PLATFORM) || defined(HAVE_OHOS_PLATFORM)
+    dri2_dpy->has_native_fence_fd = pscreen->caps.native_fence_fd;
+ #endif
+    dri2_dpy->has_compression_modifiers = pscreen->query_compression_rates &&
+@@ -692,7 +697,7 @@
+     * display process would try to use realtime priority. This is also a spec
+     * violation for IMG_context_priority.
+     */
+-#ifndef HAVE_ANDROID_PLATFORM
++#if !defined(HAVE_ANDROID_PLATFORM) && !defined(HAVE_OHOS_PLATFORM)
+    disp->Extensions.NV_context_priority_realtime =
+       disp->Extensions.IMG_context_priority &
+       (1 << __EGL_CONTEXT_PRIORITY_REALTIME_BIT);
+@@ -945,6 +950,9 @@
+    case _EGL_PLATFORM_ANDROID:
+       ret = dri2_initialize_android(disp);
+       break;
++   case _EGL_PLATFORM_OHOS:
++      ret = dri2_initialize_ohos(disp);
++      break;
+    default:
+       UNREACHABLE("Callers ensure we cannot get here.");
+       return EGL_FALSE;
+@@ -1036,6 +1044,8 @@
+       break;
+    case _EGL_PLATFORM_DEVICE:
+       break;
++   case _EGL_PLATFORM_OHOS:
++      break;
+    default:
+       UNREACHABLE("Platform teardown is not properly hooked.");
+       break;
+diff --color -ruN -x subprojects a/src/egl/drivers/dri2/egl_dri2.h b/src/egl/drivers/dri2/egl_dri2.h
+--- a/src/egl/drivers/dri2/egl_dri2.h	2026-11-18 07:43:49.000000000 +0500
++++ b/src/egl/drivers/dri2/egl_dri2.h	2026-11-19 17:39:27.242792888 +0500
+@@ -291,6 +291,11 @@
+    bool has_native_fence_fd;
+    bool pure_swrast;
+ #endif
++#ifdef HAVE_OHOS_PLATFORM
++   /* OpenHarmony/HarmonyOS native window platform (platform_ohos.c) */
++   bool has_native_fence_fd;
++   bool pure_swrast;
++#endif
+ };
+ 
+ struct dri2_egl_context {
+@@ -376,6 +381,20 @@
+    uint32_t gralloc_usage;
+ #endif
+ 
++#ifdef HAVE_OHOS_PLATFORM
++   struct NativeWindow *window;
++   struct NativeWindowBuffer *buffer;
++   int in_fence_fd;
++   struct dri_image *dri_image_back;
++   struct dri_image *dri_image_front;
++   int color_buffers_count;
++   struct {
++      struct NativeWindowBuffer *buffer;
++      int age;
++   } *color_buffers, *back;
++   uint32_t gralloc_usage;
++#endif
++
+    /* surfaceless and device */
+    struct dri_image *front;
+    enum pipe_format visual;
+@@ -561,6 +580,11 @@
+ }
+ #endif
+ 
++#ifdef HAVE_OHOS_PLATFORM
++EGLBoolean
++dri2_initialize_ohos(_EGLDisplay *disp);
++#endif
++
+ EGLBoolean
+ dri2_initialize_surfaceless(_EGLDisplay *disp);
+ 
+diff --color -ruN -x subprojects a/src/egl/drivers/dri2/platform_ohos.c b/src/egl/drivers/dri2/platform_ohos.c
+--- a/src/egl/drivers/dri2/platform_ohos.c	1970-01-01 05:00:00.000000000 +0500
++++ b/src/egl/drivers/dri2/platform_ohos.c	2026-11-19 17:42:32.246661113 +0500
+@@ -0,0 +1,828 @@
++/*
++ * Mesa 3-D graphics library
++ *
++ * OpenHarmony / HarmonyOS EGL platform for Mesa 26.
++ *
++ * Ported for the HarmonyOS bring-up on the Redmi Note 10 Pro (sweet) from
++ * the OpenHarmony third_party_mesa3d platform_ohos.c (Copyright (c) 2021
++ * Huawei Device Co., Ltd.), which in turn is based on platform_android:
++ *
++ * Copyright (C) 2010-2011 Chia-I Wu <olvaffe@gmail.com>
++ * Copyright (C) 2010-2011 LunarG Inc.
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included
++ * in all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++ * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ */
++
++#include <dirent.h>
++#include <errno.h>
++#include <fcntl.h>
++#include <stdbool.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <sys/ioctl.h>
++#include <sys/stat.h>
++#include <sys/types.h>
++#include <xf86drm.h>
++#include <drm-uapi/drm_fourcc.h>
++
++#include "util/compiler.h"
++#include "util/libsync.h"
++#include "util/log.h"
++#include "util/os_file.h"
++#include "util/u_debug.h"
++
++#include "main/glconfig.h"
++#include "egl_dri2.h"
++#include "eglglobals.h"
++#include "loader.h"
++#include "loader_dri_helper.h"
++#include "platform_ohos.h"
++#include "dri_util.h"
++
++/* ------------------------------------------------------------------------ */
++/* native buffer -> dma-buf description                                     */
++/* ------------------------------------------------------------------------ */
++
++static int
++ohos_get_fourcc(int native)
++{
++   switch (native) {
++   case PIXEL_FMT_RGB_565:
++      return DRM_FORMAT_RGB565;
++   case PIXEL_FMT_BGRA_8888:
++      return DRM_FORMAT_ARGB8888;
++   case PIXEL_FMT_BGRX_8888:
++      return DRM_FORMAT_XRGB8888;
++   case PIXEL_FMT_RGBA_8888:
++      return DRM_FORMAT_ABGR8888;
++   case PIXEL_FMT_RGBX_8888:
++      return DRM_FORMAT_XBGR8888;
++   case PIXEL_FMT_YCBCR_420_SP:
++      return DRM_FORMAT_NV12;
++   case PIXEL_FMT_YCRCB_420_SP:
++      return DRM_FORMAT_NV21;
++   case PIXEL_FMT_YCBCR_420_P:
++      return DRM_FORMAT_YUV420;
++   case PIXEL_FMT_YCRCB_420_P:
++      return DRM_FORMAT_YVU420;
++   default:
++      _eglLog(_EGL_WARNING, "ohos: unsupported native buffer format 0x%x",
++              native);
++      return -1;
++   }
++}
++
++static struct dri_image *
++ohos_create_image_from_native_buffer(_EGLDisplay *disp,
++                                     struct ANativeWindowBuffer *buf,
++                                     void *priv)
++{
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++   BufferHandle *handle = GetBufferHandleFromNative(buf);
++   unsigned error;
++
++   if (!handle || handle->fd < 0) {
++      _eglLog(_EGL_WARNING, "ohos: native buffer without dma-buf");
++      return NULL;
++   }
++
++   int fourcc = ohos_get_fourcc(handle->format);
++   if (fourcc < 0 || handle->stride <= 0)
++      return NULL;
++
++   int fds[4] = {handle->fd, -1, -1, -1};
++   int strides[4] = {handle->stride, 0, 0, 0};
++   int offsets[4] = {0, 0, 0, 0};
++   int nplanes = 1;
++   /* sweet gralloc: YUV planes packed one after the other in the same
++    * dma-buf, luma pitch = stride, luma height = buffer height */
++   int ysize = handle->stride * handle->height;
++   switch (fourcc) {
++   case DRM_FORMAT_NV12:
++   case DRM_FORMAT_NV21:
++      nplanes = 2;
++      fds[1] = handle->fd;
++      strides[1] = handle->stride;
++      offsets[1] = ysize;
++      break;
++   case DRM_FORMAT_YUV420:
++   case DRM_FORMAT_YVU420:
++      nplanes = 3;
++      fds[1] = fds[2] = handle->fd;
++      strides[1] = strides[2] = handle->stride / 2;
++      offsets[1] = ysize;
++      offsets[2] = ysize + (handle->stride / 2) * ((handle->height + 1) / 2);
++      break;
++   default:
++      break;
++   }
++
++   struct dri_image *img = dri2_from_dma_bufs(
++      dri2_dpy->dri_screen_render_gpu, handle->width, handle->height, fourcc,
++      DRM_FORMAT_MOD_LINEAR, fds, nplanes, strides, offsets,
++      __DRI_YUV_COLOR_SPACE_ITU_REC601, __DRI_YUV_NARROW_RANGE,
++      __DRI_YUV_CHROMA_SITING_0, __DRI_YUV_CHROMA_SITING_0, 0, &error, priv);
++   if (!img) {
++      img = dri2_from_dma_bufs(
++         dri2_dpy->dri_screen_render_gpu, handle->width, handle->height,
++         fourcc, DRM_FORMAT_MOD_INVALID, fds, nplanes, strides, offsets,
++         __DRI_YUV_COLOR_SPACE_ITU_REC601, __DRI_YUV_NARROW_RANGE,
++         __DRI_YUV_CHROMA_SITING_0, __DRI_YUV_CHROMA_SITING_0, 0, &error,
++         priv);
++   }
++   if (!img)
++      _eglLog(_EGL_WARNING,
++              "ohos: dma-buf import failed (%dx%d fmt %d stride %d err %u)",
++              handle->width, handle->height, handle->format, handle->stride,
++              error);
++   return img;
++}
++
++/* ------------------------------------------------------------------------ */
++/* window surfaces                                                          */
++/* ------------------------------------------------------------------------ */
++
++static void
++handle_in_fence_fd(struct dri2_egl_surface *dri2_surf, struct dri_image *img)
++{
++   _EGLDisplay *disp = dri2_surf->base.Resource.Display;
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++
++   if (dri2_surf->in_fence_fd < 0)
++      return;
++
++   validate_fence_fd(dri2_surf->in_fence_fd);
++
++   if (dri2_dpy->has_native_fence_fd) {
++      dri2_set_in_fence_fd(img, dri2_surf->in_fence_fd);
++   } else {
++      sync_wait(dri2_surf->in_fence_fd, -1);
++   }
++}
++
++static void
++close_in_fence_fd(struct dri2_egl_surface *dri2_surf)
++{
++   validate_fence_fd(dri2_surf->in_fence_fd);
++   if (dri2_surf->in_fence_fd >= 0)
++      close(dri2_surf->in_fence_fd);
++   dri2_surf->in_fence_fd = -1;
++}
++
++static EGLBoolean
++ohos_window_dequeue_buffer(struct dri2_egl_surface *dri2_surf)
++{
++   int fence_fd = -1;
++
++   if (ANativeWindow_dequeueBuffer(dri2_surf->window, &dri2_surf->buffer,
++                                   &fence_fd))
++      return EGL_FALSE;
++
++   close_in_fence_fd(dri2_surf);
++   validate_fence_fd(fence_fd);
++   dri2_surf->in_fence_fd = fence_fd;
++
++   EGLBoolean updated = EGL_FALSE;
++   for (int i = 0; i < dri2_surf->color_buffers_count; i++) {
++      if (!dri2_surf->color_buffers[i].buffer)
++         dri2_surf->color_buffers[i].buffer = dri2_surf->buffer;
++      if (dri2_surf->color_buffers[i].buffer == dri2_surf->buffer) {
++         dri2_surf->back = &dri2_surf->color_buffers[i];
++         updated = EGL_TRUE;
++         break;
++      }
++   }
++
++   if (!updated) {
++      for (int i = 0; i < dri2_surf->color_buffers_count; i++) {
++         dri2_surf->color_buffers[i].buffer = NULL;
++         dri2_surf->color_buffers[i].age = 0;
++      }
++      dri2_surf->color_buffers[0].buffer = dri2_surf->buffer;
++      dri2_surf->back = &dri2_surf->color_buffers[0];
++   }
++
++   return EGL_TRUE;
++}
++
++static EGLBoolean
++ohos_window_enqueue_buffer(_EGLDisplay *disp,
++                           struct dri2_egl_surface *dri2_surf)
++{
++   /* The consumer (render_service / composer) owns the fence afterwards. */
++   int fence_fd = dri2_surf->out_fence_fd;
++   dri2_surf->out_fence_fd = -1;
++
++   /* eglSwapBuffers already dropped the display lock (egl_relax) */
++   ANativeWindow_queueBuffer(dri2_surf->window, dri2_surf->buffer, fence_fd);
++
++   dri2_surf->buffer = NULL;
++   dri2_surf->back = NULL;
++
++   if (dri2_surf->dri_image_back) {
++      dri2_destroy_image(dri2_surf->dri_image_back);
++      dri2_surf->dri_image_back = NULL;
++   }
++
++   return EGL_TRUE;
++}
++
++static void
++ohos_window_cancel_buffer(struct dri2_egl_surface *dri2_surf)
++{
++   int fence_fd = dri2_surf->out_fence_fd;
++
++   dri2_surf->out_fence_fd = -1;
++   int ret = ANativeWindow_cancelBuffer(dri2_surf->window, dri2_surf->buffer,
++                                        fence_fd);
++   dri2_surf->buffer = NULL;
++   if (ret < 0) {
++      _eglLog(_EGL_WARNING, "ohos: NativeWindowCancelBuffer failed");
++      dri2_surf->base.Lost = EGL_TRUE;
++   }
++
++   close_in_fence_fd(dri2_surf);
++}
++
++static _EGLSurface *
++ohos_create_surface(_EGLDisplay *disp, EGLint type, _EGLConfig *conf,
++                    void *native_window, const EGLint *attrib_list)
++{
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++   struct dri2_egl_config *dri2_conf = dri2_egl_config(conf);
++   struct dri2_egl_surface *dri2_surf;
++   struct ANativeWindow *window = native_window;
++   const struct dri_config *config;
++
++   dri2_surf = calloc(1, sizeof *dri2_surf);
++   if (!dri2_surf) {
++      _eglError(EGL_BAD_ALLOC, "ohos_create_surface");
++      return NULL;
++   }
++
++   dri2_surf->in_fence_fd = -1;
++
++   if (!dri2_init_surface(&dri2_surf->base, disp, type, conf, attrib_list, true,
++                          native_window))
++      goto cleanup_surface;
++
++   if (type == EGL_WINDOW_BIT) {
++      int format = ANativeWindow_getFormat(window);
++      if (format < 0) {
++         _eglError(EGL_BAD_NATIVE_WINDOW, "ohos_create_surface");
++         goto cleanup_surface;
++      }
++
++      /* OpenHarmony surfaces use up to 3 buffers by default; keep a few spare
++       * slots so buffer age tracking survives queue size changes.
++       */
++      int buffer_count = 5;
++      dri2_surf->color_buffers =
++         calloc(buffer_count, sizeof(*dri2_surf->color_buffers));
++      if (!dri2_surf->color_buffers) {
++         _eglError(EGL_BAD_ALLOC, "ohos_create_surface");
++         goto cleanup_surface;
++      }
++      dri2_surf->color_buffers_count = buffer_count;
++
++      if (format != dri2_conf->base.NativeVisualID) {
++         _eglLog(_EGL_DEBUG, "ohos: native format mismatch: 0x%x != 0x%x",
++                 format, dri2_conf->base.NativeVisualID);
++      }
++
++      int32_t height = 0, width = 0;
++      NativeWindowHandleOpt(window, GET_BUFFER_GEOMETRY, &height, &width);
++      dri2_surf->base.Width = width;
++      dri2_surf->base.Height = height;
++   }
++
++   config = dri2_get_dri_config(dri2_conf, type, dri2_surf->base.GLColorspace);
++   if (!config) {
++      _eglError(EGL_BAD_MATCH,
++                "Unsupported surfacetype/colorspace configuration");
++      goto cleanup_surface;
++   }
++
++   if (!dri2_create_drawable(dri2_dpy, config, dri2_surf, dri2_surf))
++      goto cleanup_surface;
++
++   if (window) {
++      ANativeWindow_acquire(window);
++      dri2_surf->window = window;
++   }
++
++   return &dri2_surf->base;
++
++cleanup_surface:
++   if (dri2_surf->color_buffers_count)
++      free(dri2_surf->color_buffers);
++   free(dri2_surf);
++
++   return NULL;
++}
++
++static _EGLSurface *
++ohos_create_window_surface(_EGLDisplay *disp, _EGLConfig *conf,
++                           void *native_window, const EGLint *attrib_list)
++{
++   return ohos_create_surface(disp, EGL_WINDOW_BIT, conf, native_window,
++                              attrib_list);
++}
++
++static _EGLSurface *
++ohos_create_pbuffer_surface(_EGLDisplay *disp, _EGLConfig *conf,
++                            const EGLint *attrib_list)
++{
++   return ohos_create_surface(disp, EGL_PBUFFER_BIT, conf, NULL, attrib_list);
++}
++
++static EGLBoolean
++ohos_destroy_surface(_EGLDisplay *disp, _EGLSurface *surf)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
++
++   if (dri2_surf->base.Type == EGL_WINDOW_BIT) {
++      if (dri2_surf->buffer)
++         ohos_window_cancel_buffer(dri2_surf);
++
++      if (dri2_surf->window)
++         ANativeWindow_release(dri2_surf->window);
++   }
++
++   if (dri2_surf->dri_image_back) {
++      dri2_destroy_image(dri2_surf->dri_image_back);
++      dri2_surf->dri_image_back = NULL;
++   }
++
++   if (dri2_surf->dri_image_front) {
++      dri2_destroy_image(dri2_surf->dri_image_front);
++      dri2_surf->dri_image_front = NULL;
++   }
++
++   driDestroyDrawable(dri2_surf->dri_drawable);
++
++   close_in_fence_fd(dri2_surf);
++   dri2_fini_surface(surf);
++   free(dri2_surf->color_buffers);
++   free(dri2_surf);
++
++   return EGL_TRUE;
++}
++
++static EGLBoolean
++ohos_swap_interval(_EGLDisplay *disp, _EGLSurface *surf, EGLint interval)
++{
++   /* render_service paces itself with its own vsync */
++   surf->SwapInterval = interval;
++   return EGL_TRUE;
++}
++
++static int
++update_buffers(struct dri2_egl_surface *dri2_surf)
++{
++   if (dri2_surf->base.Lost)
++      return -1;
++
++   if (dri2_surf->base.Type != EGL_WINDOW_BIT)
++      return 0;
++
++   if (!dri2_surf->buffer && !ohos_window_dequeue_buffer(dri2_surf)) {
++      _eglLog(_EGL_WARNING, "ohos: could not dequeue buffer from window");
++      dri2_surf->base.Lost = EGL_TRUE;
++      return -1;
++   }
++
++   BufferHandle *handle = GetBufferHandleFromNative(dri2_surf->buffer);
++   if (handle && (dri2_surf->base.Width != handle->width ||
++                  dri2_surf->base.Height != handle->height)) {
++      dri2_surf->base.Width = handle->width;
++      dri2_surf->base.Height = handle->height;
++   }
++
++   return 0;
++}
++
++static int
++get_front_bo(struct dri2_egl_surface *dri2_surf, unsigned int format)
++{
++   struct dri2_egl_display *dri2_dpy =
++      dri2_egl_display(dri2_surf->base.Resource.Display);
++
++   if (dri2_surf->dri_image_front)
++      return 0;
++
++   if (dri2_surf->base.Type == EGL_PBUFFER_BIT) {
++      dri2_surf->dri_image_front = dri_create_image(
++         dri2_dpy->dri_screen_render_gpu, dri2_surf->base.Width,
++         dri2_surf->base.Height, format, NULL, 0, 0, NULL);
++      if (!dri2_surf->dri_image_front) {
++         _eglLog(_EGL_WARNING, "ohos: dri2_image_front allocation failed");
++         return -1;
++      }
++   }
++
++   return 0;
++}
++
++static int
++get_back_bo(struct dri2_egl_surface *dri2_surf)
++{
++   _EGLDisplay *disp = dri2_surf->base.Resource.Display;
++
++   if (dri2_surf->dri_image_back)
++      return 0;
++
++   if (dri2_surf->base.Type == EGL_WINDOW_BIT) {
++      if (!dri2_surf->buffer) {
++         _eglLog(_EGL_WARNING, "ohos: could not get native buffer");
++         return -1;
++      }
++
++      dri2_surf->dri_image_back =
++         ohos_create_image_from_native_buffer(disp, dri2_surf->buffer, NULL);
++      if (!dri2_surf->dri_image_back) {
++         _eglLog(_EGL_WARNING, "ohos: failed to create DRI image from FD");
++         return -1;
++      }
++
++      handle_in_fence_fd(dri2_surf, dri2_surf->dri_image_back);
++   }
++
++   return 0;
++}
++
++static int
++ohos_image_get_buffers(struct dri_drawable *driDrawable, unsigned int format,
++                       uint32_t *stamp, void *loaderPrivate,
++                       uint32_t buffer_mask, struct __DRIimageList *images)
++{
++   struct dri2_egl_surface *dri2_surf = loaderPrivate;
++
++   images->image_mask = 0;
++   images->front = NULL;
++   images->back = NULL;
++
++   if (update_buffers(dri2_surf) < 0)
++      return 0;
++
++   if (buffer_mask & __DRI_IMAGE_BUFFER_FRONT) {
++      if (get_front_bo(dri2_surf, format) < 0)
++         return 0;
++
++      if (dri2_surf->dri_image_front) {
++         images->front = dri2_surf->dri_image_front;
++         images->image_mask |= __DRI_IMAGE_BUFFER_FRONT;
++      }
++   }
++
++   if (buffer_mask & __DRI_IMAGE_BUFFER_BACK) {
++      if (get_back_bo(dri2_surf) < 0)
++         return 0;
++
++      if (dri2_surf->dri_image_back) {
++         images->back = dri2_surf->dri_image_back;
++         images->image_mask |= __DRI_IMAGE_BUFFER_BACK;
++      }
++   }
++
++   return 1;
++}
++
++static EGLint
++ohos_query_buffer_age(_EGLDisplay *disp, _EGLSurface *surface)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surface);
++
++   if (update_buffers(dri2_surf) < 0) {
++      _eglError(EGL_BAD_ALLOC, "ohos_query_buffer_age");
++      return -1;
++   }
++
++   return dri2_surf->back ? dri2_surf->back->age : 0;
++}
++
++static EGLBoolean
++ohos_swap_buffers(_EGLDisplay *disp, _EGLSurface *draw)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(draw);
++
++   for (int i = 0; i < dri2_surf->color_buffers_count; i++) {
++      if (dri2_surf->color_buffers[i].age > 0)
++         dri2_surf->color_buffers[i].age++;
++   }
++
++   if (dri2_surf->back)
++      dri2_surf->back->age = 1;
++
++   dri2_flush_drawable_for_swapbuffers_flags(disp, draw,
++                                             __DRI2_NOTHROTTLE_SWAPBUFFER);
++
++   if (dri2_surf->buffer)
++      ohos_window_enqueue_buffer(disp, dri2_surf);
++
++   dri_invalidate_drawable(dri2_surf->dri_drawable);
++
++   return EGL_TRUE;
++}
++
++static EGLBoolean
++ohos_query_surface(_EGLDisplay *disp, _EGLSurface *surf, EGLint attribute,
++                   EGLint *value)
++{
++   struct dri2_egl_surface *dri2_surf = dri2_egl_surface(surf);
++   int32_t width = 0, height = 0;
++
++   switch (attribute) {
++   case EGL_WIDTH:
++      if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window) {
++         NativeWindowHandleOpt(dri2_surf->window, GET_BUFFER_GEOMETRY, &height,
++                               &width);
++         *value = width;
++         return EGL_TRUE;
++      }
++      break;
++   case EGL_HEIGHT:
++      if (dri2_surf->base.Type == EGL_WINDOW_BIT && dri2_surf->window) {
++         NativeWindowHandleOpt(dri2_surf->window, GET_BUFFER_GEOMETRY, &height,
++                               &width);
++         *value = height;
++         return EGL_TRUE;
++      }
++      break;
++   default:
++      break;
++   }
++   return _eglQuerySurface(disp, surf, attribute, value);
++}
++
++static _EGLImage *
++dri2_create_image_ohos_native_buffer(_EGLDisplay *disp, _EGLContext *ctx,
++                                     struct ANativeWindowBuffer *buf)
++{
++   if (ctx != NULL) {
++      _eglError(EGL_BAD_CONTEXT, "eglCreateEGLImageKHR: for "
++                                 "EGL_NATIVE_BUFFER_OHOS, the context must be "
++                                 "EGL_NO_CONTEXT");
++      return NULL;
++   }
++
++   if (!buf) {
++      _eglError(EGL_BAD_PARAMETER, "eglCreateEGLImageKHR");
++      return NULL;
++   }
++
++   struct dri_image *dri_image =
++      ohos_create_image_from_native_buffer(disp, buf, buf);
++   if (dri_image) {
++      /* keep the native buffer alive as long as the EGLImage */
++      NativeObjectReference(buf);
++      return dri2_create_image_from_dri(disp, dri_image);
++   }
++
++   return NULL;
++}
++
++static _EGLImage *
++ohos_create_image_khr(_EGLDisplay *disp, _EGLContext *ctx, EGLenum target,
++                      EGLClientBuffer buffer, const EGLint *attr_list)
++{
++   switch (target) {
++   case EGL_NATIVE_BUFFER_OHOS:
++      return dri2_create_image_ohos_native_buffer(
++         disp, ctx, (struct ANativeWindowBuffer *)buffer);
++   default:
++      return dri2_create_image_khr(disp, ctx, target, buffer, attr_list);
++   }
++}
++
++static void
++ohos_flush_front_buffer(struct dri_drawable *driDrawable, void *loaderPrivate)
++{
++}
++
++static unsigned
++ohos_get_capability(void *loaderPrivate, enum dri_loader_cap cap)
++{
++   switch (cap) {
++   case DRI_LOADER_CAP_RGBA_ORDERING:
++      return 1;
++   default:
++      return 0;
++   }
++}
++
++static void
++ohos_destroy_loader_image_state(void *loaderPrivate)
++{
++   if (loaderPrivate)
++      NativeObjectUnreference(loaderPrivate);
++}
++
++static void
++ohos_add_configs_for_visuals(_EGLDisplay *disp)
++{
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++   static const struct {
++      int format;
++      enum pipe_format pipe_format;
++   } visuals[] = {
++      {PIXEL_FMT_RGBA_8888, PIPE_FORMAT_RGBA8888_UNORM},
++      {PIXEL_FMT_RGBX_8888, PIPE_FORMAT_RGBX8888_UNORM},
++      {PIXEL_FMT_RGB_565, PIPE_FORMAT_B5G6R5_UNORM},
++      {PIXEL_FMT_BGRA_8888, PIPE_FORMAT_BGRA8888_UNORM},
++   };
++
++   unsigned int format_count[ARRAY_SIZE(visuals)] = {0};
++   bool has_rgba = false;
++
++   for (int i = 0; i < ARRAY_SIZE(visuals); i++) {
++      if (visuals[i].format == PIXEL_FMT_BGRA_8888 && has_rgba)
++         continue;
++      for (int j = 0; dri2_dpy->driver_configs[j]; j++) {
++         const struct gl_config *gl_config =
++            (struct gl_config *)dri2_dpy->driver_configs[j];
++         enum pipe_format linear_format =
++            util_format_linear(gl_config->color_format);
++         if (linear_format != visuals[i].pipe_format)
++            continue;
++
++         const EGLint surface_type = EGL_WINDOW_BIT | EGL_PBUFFER_BIT;
++         const EGLint config_attrs[] = {
++            EGL_NATIVE_VISUAL_ID,   visuals[i].format,
++            EGL_NATIVE_VISUAL_TYPE, visuals[i].format,
++            EGL_NONE,
++         };
++
++         struct dri2_egl_config *dri2_conf = dri2_add_config(
++            disp, dri2_dpy->driver_configs[j], surface_type, config_attrs);
++         if (dri2_conf)
++            format_count[i]++;
++      }
++
++      if (visuals[i].format == PIXEL_FMT_RGBA_8888 && format_count[i])
++         has_rgba = true;
++   }
++
++   for (int i = 0; i < ARRAY_SIZE(format_count); i++) {
++      if (!format_count[i])
++         _eglLog(_EGL_DEBUG, "ohos: no DRI config supports native format 0x%x",
++                 visuals[i].format);
++   }
++}
++
++static const struct dri2_egl_display_vtbl ohos_display_vtbl = {
++   .authenticate = NULL,
++   .create_window_surface = ohos_create_window_surface,
++   .create_pbuffer_surface = ohos_create_pbuffer_surface,
++   .destroy_surface = ohos_destroy_surface,
++   .create_image = ohos_create_image_khr,
++   .swap_buffers = ohos_swap_buffers,
++   .swap_interval = ohos_swap_interval,
++   .query_buffer_age = ohos_query_buffer_age,
++   .query_surface = ohos_query_surface,
++};
++
++/* Mesa 27 DRI loader interface: plain function tables, no __DRIextension headers. */
++static const __DRIimageLoaderExtension ohos_image_loader_extension = {
++   .getBuffers = ohos_image_get_buffers,
++   .flushFrontBuffer = ohos_flush_front_buffer,
++   .getCapability = ohos_get_capability,
++   .flushSwapBuffers = NULL,
++   .destroyLoaderImageState = ohos_destroy_loader_image_state,
++};
++
++static const struct dri_loader_funcs ohos_image_loader_funcs = {
++   .image_lookup = &image_lookup_extension,
++   .image = &ohos_image_loader_extension,
++};
++
++/* ------------------------------------------------------------------------ */
++/* device selection                                                         */
++/* ------------------------------------------------------------------------ */
++
++static bool
++ohos_want_software(void)
++{
++   /* persist.sys.graphic.mesa.software / environment override for bring-up */
++   if (debug_get_bool_option("OHOS_MESA_SOFTWARE", false))
++      return true;
++   return access("/data/local/tmp/mesa_software", F_OK) == 0;
++}
++
++static EGLBoolean
++ohos_open_kgsl(_EGLDisplay *disp)
++{
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++
++   int fd = loader_open_device("/dev/kgsl-3d0");
++   if (fd < 0) {
++      mesa_logw("ohos: cannot open /dev/kgsl-3d0: %s", strerror(errno));
++      return EGL_FALSE;
++   }
++
++   dri2_dpy->fd_render_gpu = fd;
++   dri2_dpy->driver_name = strdup("kgsl");
++   disp->Options.Kgsl = EGL_TRUE;
++   dri2_dpy->loader_funcs = &ohos_image_loader_funcs;
++   dri2_detect_swrast_kopper(disp);
++
++   if (!dri2_create_screen(disp)) {
++      mesa_logw("ohos: freedreno (kgsl) screen creation failed");
++      free(dri2_dpy->driver_name);
++      dri2_dpy->driver_name = NULL;
++      close(fd);
++      dri2_dpy->fd_render_gpu = -1;
++      disp->Options.Kgsl = EGL_FALSE;
++      return EGL_FALSE;
++   }
++
++   mesa_logw("ohos: using Adreno GPU (freedreno on kgsl)");
++   return EGL_TRUE;
++}
++
++static EGLBoolean
++ohos_open_kms_swrast(_EGLDisplay *disp)
++{
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++
++   int fd = loader_open_device("/dev/dri/card0");
++   if (fd < 0)
++      return EGL_FALSE;
++
++   /* never keep the display master: composer_host needs it */
++   drmDropMaster(fd);
++
++   dri2_dpy->fd_render_gpu = fd;
++   dri2_dpy->driver_name = strdup("kms_swrast");
++   dri2_dpy->loader_funcs = &ohos_image_loader_funcs;
++   dri2_detect_swrast_kopper(disp);
++
++   if (!dri2_create_screen(disp)) {
++      free(dri2_dpy->driver_name);
++      dri2_dpy->driver_name = NULL;
++      close(fd);
++      dri2_dpy->fd_render_gpu = -1;
++      return EGL_FALSE;
++   }
++
++   mesa_logw("ohos: using software rendering (kms_swrast)");
++   return EGL_TRUE;
++}
++
++EGLBoolean
++dri2_initialize_ohos(_EGLDisplay *disp)
++{
++   struct dri2_egl_display *dri2_dpy = dri2_egl_display(disp);
++   const char *err;
++   bool opened = false;
++
++   if (!ohos_want_software())
++      opened = ohos_open_kgsl(disp);
++   if (!opened)
++      opened = ohos_open_kms_swrast(disp);
++   if (!opened) {
++      err = "DRI2: failed to open a device";
++      goto cleanup;
++   }
++
++   dri2_dpy->fd_display_gpu = dri2_dpy->fd_render_gpu;
++
++   if (!dri2_setup_device(disp, disp->Options.Kgsl ? true : false)) {
++      err = "DRI2: failed to setup EGLDevice";
++      goto cleanup;
++   }
++
++   dri2_setup_screen(disp);
++   dri2_setup_swap_interval(disp, 1);
++
++   disp->Extensions.KHR_image = EGL_TRUE;
++   if (disp->Extensions.ANDROID_native_fence_sync)
++      disp->Extensions.EXT_buffer_age = EGL_TRUE;
++   else
++      disp->Extensions.KHR_partial_update = EGL_FALSE;
++
++   ohos_add_configs_for_visuals(disp);
++
++   dri2_dpy->vtbl = &ohos_display_vtbl;
++
++   return EGL_TRUE;
++
++cleanup:
++   return _eglError(EGL_NOT_INITIALIZED, err);
++}
+diff --color -ruN -x subprojects a/src/egl/drivers/dri2/platform_ohos.h b/src/egl/drivers/dri2/platform_ohos.h
+--- a/src/egl/drivers/dri2/platform_ohos.h	1970-01-01 05:00:00.000000000 +0500
++++ b/src/egl/drivers/dri2/platform_ohos.h	2026-11-19 17:29:38.090014762 +0500
+@@ -0,0 +1,73 @@
++/*
++ * OpenHarmony / HarmonyOS native window glue for the EGL dri2 driver.
++ *
++ * Maps the small part of the ANativeWindow API that the EGL platform code
++ * needs onto the OpenHarmony NativeWindow API (graphic_surface window.h).
++ *
++ * Ported to Mesa 26 for the Redmi Note 10 Pro (sweet) HarmonyOS bring-up,
++ * based on the OpenHarmony third_party_mesa3d platform_ohos.h.
++ *
++ * SPDX-License-Identifier: MIT
++ */
++
++#ifndef EGL_OHOS_INCLUDED
++#define EGL_OHOS_INCLUDED
++
++#include <errno.h>
++#include <stdbool.h>
++#include <stdint.h>
++#include <unistd.h>
++
++#include "display_type.h"
++#include "window.h"
++
++#define ANativeWindow NativeWindow
++#define ANativeWindowBuffer NativeWindowBuffer
++
++static inline void
++ANativeWindow_acquire(struct ANativeWindow *window)
++{
++   NativeObjectReference(window);
++}
++
++static inline void
++ANativeWindow_release(struct ANativeWindow *window)
++{
++   NativeObjectUnreference(window);
++}
++
++static inline int32_t
++ANativeWindow_getFormat(struct ANativeWindow *window)
++{
++   int32_t format = PIXEL_FMT_RGBA_8888;
++   int32_t res = NativeWindowHandleOpt(window, GET_FORMAT, &format);
++   return res == 0 ? format : -1;
++}
++
++static inline int32_t
++ANativeWindow_dequeueBuffer(struct ANativeWindow *window,
++                            struct ANativeWindowBuffer **buffer, int *fenceFd)
++{
++   return NativeWindowRequestBuffer(window, buffer, fenceFd);
++}
++
++static inline int32_t
++ANativeWindow_queueBuffer(struct ANativeWindow *window,
++                          struct ANativeWindowBuffer *buffer, int fenceFd)
++{
++   struct Region dirty;
++   dirty.rectNumber = 0;
++   dirty.rects = NULL;
++   return NativeWindowFlushBuffer(window, buffer, fenceFd, dirty);
++}
++
++static inline int32_t
++ANativeWindow_cancelBuffer(struct ANativeWindow *window,
++                           struct ANativeWindowBuffer *buffer, int fenceFd)
++{
++   if (fenceFd >= 0)
++      close(fenceFd);
++   return NativeWindowCancelBuffer(window, buffer);
++}
++
++#endif /* EGL_OHOS_INCLUDED */
+diff --color -ruN -x subprojects a/src/egl/main/eglapi.c b/src/egl/main/eglapi.c
+--- a/src/egl/main/eglapi.c	2026-11-18 07:43:49.000000000 +0500
++++ b/src/egl/main/eglapi.c	2026-11-19 17:29:38.090352562 +0500
+@@ -456,6 +456,11 @@
+       disp = _eglGetAndroidDisplay(native_display, attrib_list);
+       break;
+ #endif
++#ifdef HAVE_OHOS_PLATFORM
++   case EGL_PLATFORM_OHOS_KHR:
++      disp = _eglGetOHOSDisplay(native_display, attrib_list);
++      break;
++#endif
+    case EGL_PLATFORM_DEVICE_EXT:
+       disp = _eglGetDeviceDisplay(native_display, attrib_list);
+       break;
+diff --color -ruN -x subprojects a/src/egl/main/egldisplay.c b/src/egl/main/egldisplay.c
+--- a/src/egl/main/egldisplay.c	2026-11-18 07:43:49.000000000 +0500
++++ b/src/egl/main/egldisplay.c	2026-11-19 17:29:38.090851286 +0500
+@@ -80,6 +80,7 @@
+    {_EGL_PLATFORM_WAYLAND, "wayland"},
+    {_EGL_PLATFORM_DRM, "drm"},
+    {_EGL_PLATFORM_ANDROID, "android"},
++   {_EGL_PLATFORM_OHOS, "openharmony"},
+    {_EGL_PLATFORM_HAIKU, "haiku"},
+    {_EGL_PLATFORM_SURFACELESS, "surfaceless"},
+    {_EGL_PLATFORM_DEVICE, "device"},
+@@ -707,6 +708,18 @@
+ }
+ #endif /* HAVE_ANDROID_PLATFORM */
+ 
++#ifdef HAVE_OHOS_PLATFORM
++_EGLDisplay *
++_eglGetOHOSDisplay(void *native_display, const EGLAttrib *attrib_list)
++{
++   if (attrib_list != NULL && attrib_list[0] != EGL_NONE) {
++      _eglError(EGL_BAD_ATTRIBUTE, "eglGetPlatformDisplay");
++      return NULL;
++   }
++   return _eglFindDisplay(_EGL_PLATFORM_OHOS, native_display, attrib_list);
++}
++#endif /* HAVE_OHOS_PLATFORM */
++
+ _EGLDisplay *
+ _eglGetDeviceDisplay(void *native_display, const EGLAttrib *attrib_list)
+ {
+diff --color -ruN -x subprojects a/src/egl/main/egldisplay.h b/src/egl/main/egldisplay.h
+--- a/src/egl/main/egldisplay.h	2026-11-18 07:43:49.000000000 +0500
++++ b/src/egl/main/egldisplay.h	2026-11-19 17:29:38.091085299 +0500
+@@ -55,6 +55,7 @@
+    _EGL_PLATFORM_SURFACELESS,
+    _EGL_PLATFORM_DEVICE,
+    _EGL_PLATFORM_WINDOWS,
++   _EGL_PLATFORM_OHOS,
+ 
+    _EGL_NUM_PLATFORMS,
+    _EGL_INVALID_PLATFORM = -1
+@@ -352,6 +353,11 @@
+ _eglGetAndroidDisplay(void *native_display, const EGLAttrib *attrib_list);
+ #endif
+ 
++#ifdef HAVE_OHOS_PLATFORM
++_EGLDisplay *
++_eglGetOHOSDisplay(void *native_display, const EGLAttrib *attrib_list);
++#endif
++
+ _EGLDisplay *
+ _eglGetDeviceDisplay(void *native_display, const EGLAttrib *attrib_list);
+ 
+diff --color -ruN -x subprojects a/src/egl/main/egllog.c b/src/egl/main/egllog.c
+--- a/src/egl/main/egllog.c	2026-11-18 07:43:49.000000000 +0500
++++ b/src/egl/main/egllog.c	2026-11-19 17:29:38.091341556 +0500
+@@ -45,6 +45,7 @@
+ #include "util/u_string.h"
+ 
+ #include "egllog.h"
++#include "util/log.h"
+ 
+ #define MAXSTRING          1000
+ #define FALLBACK_LOG_LEVEL _EGL_WARNING
+diff --color -ruN -x subprojects a/src/egl/meson.build b/src/egl/meson.build
+--- a/src/egl/meson.build	2026-11-18 07:43:49.000000000 +0500
++++ b/src/egl/meson.build	2026-11-19 17:29:38.091579377 +0500
+@@ -123,6 +123,10 @@
+     deps_for_egl += [dep_android, idep_u_gralloc]
+     files_egl += files('drivers/dri2/platform_android.c')
+   endif
++  if with_platform_ohos
++    deps_for_egl += dep_ohos
++    files_egl += files('drivers/dri2/platform_ohos.c')
++  endif
+ elif with_platform_haiku
+   c_args_for_egl += [
+     '-D_EGL_BUILT_IN_DRIVER_HAIKU',
+Binary files a/src/freedreno/common/__pycache__/freedreno_dev_info.cpython-314.pyc and b/src/freedreno/common/__pycache__/freedreno_dev_info.cpython-314.pyc differ
+Binary files a/src/gallium/drivers/zink/__pycache__/zink_extensions.cpython-314.pyc and b/src/gallium/drivers/zink/__pycache__/zink_extensions.cpython-314.pyc differ
+diff --color -ruN -x subprojects a/src/gallium/frontends/dri/dri_screen.c b/src/gallium/frontends/dri/dri_screen.c
+--- a/src/gallium/frontends/dri/dri_screen.c	2026-11-18 07:43:49.000000000 +0500
++++ b/src/gallium/frontends/dri/dri_screen.c	2026-11-19 17:29:38.091774036 +0500
+@@ -648,6 +648,14 @@
+    if (screen->dmabuf_import && dmabuf_caps & DRM_PRIME_CAP_EXPORT)
+       screen->has_dmabuf = true;
+ #endif
++#ifdef HAVE_OHOS_PLATFORM
++   /* HarmonyOS hands every window/layer buffer over as a dma-buf.  The KGSL
++    * fd (freedreno) and the kms_swrast winsys both import dma-bufs, but
++    * DRM_CAP_PRIME cannot be queried on a KGSL fd, so the generic probe
++    * above leaves import disabled. */
++   screen->dmabuf_import = true;
++   screen->has_dmabuf = true;
++#endif
+ 
+    return dri_fill_in_modes(screen);
+ }
+diff --color -ruN -x subprojects a/src/gallium/winsys/sw/kms-dri/kms_dri_sw_winsys.c b/src/gallium/winsys/sw/kms-dri/kms_dri_sw_winsys.c
+--- a/src/gallium/winsys/sw/kms-dri/kms_dri_sw_winsys.c	2026-11-18 07:43:49.000000000 +0500
++++ b/src/gallium/winsys/sw/kms-dri/kms_dri_sw_winsys.c	2026-11-19 17:29:38.092024559 +0500
+@@ -58,6 +58,10 @@
+ 
+ #include "util/simple_mtx.h"
+ 
++/* render_service imports and frees buffers from several GL threads at once:
++ * the bo list and the reference counts need a lock (HarmonyOS sweet port) */
++static simple_mtx_t kms_bo_lock = SIMPLE_MTX_INITIALIZER;
++
+ #if MESA_DEBUG
+ #define DEBUG_PRINT(msg, ...) fprintf(stderr, msg, __VA_ARGS__)
+ #else
+@@ -206,7 +210,9 @@
+    if (!plane)
+       goto free_bo;
+ 
++   simple_mtx_lock(&kms_bo_lock);
+    list_add(&kms_sw_dt->link, &kms_sw->bo_list);
++   simple_mtx_unlock(&kms_bo_lock);
+ 
+    DEBUG_PRINT("KMS-DEBUG: created buffer %u (size %u)\n", kms_sw_dt->handle, kms_sw_dt->size);
+ 
+@@ -295,7 +301,9 @@
+       return NULL;
+    }
+ 
++   simple_mtx_lock(&kms_bo_lock);
+    list_add(&kms_sw_dt->link, &kms_sw->bo_list);
++   simple_mtx_unlock(&kms_bo_lock);
+ 
+    return sw_displaytarget(plane);
+ }
+@@ -308,9 +316,14 @@
+    struct kms_sw_plane *plane = kms_sw_plane(dt);
+    struct kms_sw_displaytarget *kms_sw_dt = plane->dt;
+ 
++   simple_mtx_lock(&kms_bo_lock);
+    kms_sw_dt->ref_count --;
+-   if (kms_sw_dt->ref_count > 0)
++   if (kms_sw_dt->ref_count > 0) {
++      simple_mtx_unlock(&kms_bo_lock);
+       return;
++   }
++   list_del(&kms_sw_dt->link);
++   simple_mtx_unlock(&kms_bo_lock);
+ 
+    if (kms_sw_dt->map_count > 0) {
+       DEBUG_PRINT("KMS-DEBUG: leaked map buffer %u\n", kms_sw_dt->handle);
+@@ -324,8 +337,6 @@
+       drmIoctl(kms_sw->fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy_req);
+    }
+ 
+-   list_del(&kms_sw_dt->link);
+-
+    mtx_destroy(&kms_sw_dt->map_lock);
+    DEBUG_PRINT("KMS-DEBUG: destroyed buffer %u\n", kms_sw_dt->handle);
+ 
+@@ -425,6 +436,7 @@
+       return NULL;
+    }
+ 
++   /* caller (from_handle) holds kms_bo_lock */
+    list_add(&kms_sw_dt->link, &kms_sw->bo_list);
+ 
+    return plane;
+@@ -465,7 +477,7 @@
+ }
+ 
+ static struct sw_displaytarget *
+-kms_sw_displaytarget_from_handle(struct sw_winsys *ws,
++kms_sw_displaytarget_from_handle_locked(struct sw_winsys *ws,
+                                  const struct pipe_resource *templ,
+                                  struct winsys_handle *whandle,
+                                  unsigned *stride)
+@@ -510,6 +522,19 @@
+    return NULL;
+ }
+ 
++static struct sw_displaytarget *
++kms_sw_displaytarget_from_handle(struct sw_winsys *ws,
++                                 const struct pipe_resource *templ,
++                                 struct winsys_handle *whandle,
++                                 unsigned *stride)
++{
++   simple_mtx_lock(&kms_bo_lock);
++   struct sw_displaytarget *dt =
++      kms_sw_displaytarget_from_handle_locked(ws, templ, whandle, stride);
++   simple_mtx_unlock(&kms_bo_lock);
++   return dt;
++}
++
+ static bool
+ kms_sw_displaytarget_get_handle(struct sw_winsys *winsys,
+                                 struct sw_displaytarget *dt,
+Binary files a/src/mesa/glapi/glapi/gen/__pycache__/apiexec.cpython-314.pyc and b/src/mesa/glapi/glapi/gen/__pycache__/apiexec.cpython-314.pyc differ
+Binary files a/src/mesa/glapi/glapi/gen/__pycache__/gl_XML.cpython-314.pyc and b/src/mesa/glapi/glapi/gen/__pycache__/gl_XML.cpython-314.pyc differ
+Binary files a/src/mesa/glapi/glapi/gen/__pycache__/glX_XML.cpython-314.pyc and b/src/mesa/glapi/glapi/gen/__pycache__/glX_XML.cpython-314.pyc differ
+Binary files a/src/mesa/glapi/glapi/gen/__pycache__/license.cpython-314.pyc and b/src/mesa/glapi/glapi/gen/__pycache__/license.cpython-314.pyc differ
+Binary files a/src/mesa/glapi/glapi/gen/__pycache__/marshal_XML.cpython-314.pyc and b/src/mesa/glapi/glapi/gen/__pycache__/marshal_XML.cpython-314.pyc differ
+Binary files a/src/mesa/glapi/glapi/gen/__pycache__/static_data.cpython-314.pyc and b/src/mesa/glapi/glapi/gen/__pycache__/static_data.cpython-314.pyc differ
+Binary files a/src/mesa/glapi/glapi/gen/__pycache__/typeexpr.cpython-314.pyc and b/src/mesa/glapi/glapi/gen/__pycache__/typeexpr.cpython-314.pyc differ
+Binary files a/src/mesa/glapi/new/__pycache__/genCommon.cpython-314.pyc and b/src/mesa/glapi/new/__pycache__/genCommon.cpython-314.pyc differ
+Binary files a/src/mesa/main/__pycache__/format_parser.cpython-314.pyc and b/src/mesa/main/__pycache__/format_parser.cpython-314.pyc differ
+Binary files a/src/mesa/main/__pycache__/get_hash_params.cpython-314.pyc and b/src/mesa/main/__pycache__/get_hash_params.cpython-314.pyc differ
+Binary files a/src/util/format/__pycache__/u_format_pack.cpython-314.pyc and b/src/util/format/__pycache__/u_format_pack.cpython-314.pyc differ
+Binary files a/src/util/format/__pycache__/u_format_parse.cpython-314.pyc and b/src/util/format/__pycache__/u_format_parse.cpython-314.pyc differ
+diff --color -ruN -x subprojects a/src/util/log.c b/src/util/log.c
+--- a/src/util/log.c	2026-11-18 07:43:49.000000000 +0500
++++ b/src/util/log.c	2026-11-19 17:29:38.092321876 +0500
+@@ -28,6 +28,9 @@
+ #include "c11/threads.h"
+ #include "util/detect_os.h"
+ #include "util/log.h"
++#ifdef HAVE_OHOS_PLATFORM
++#include <dlfcn.h>
++#endif
+ #include "util/ralloc.h"
+ #include "util/u_debug.h"
+ 
+@@ -312,6 +315,32 @@
+    fprintf(fp, "%s", msg);
+    fflush(fp);
+ 
++#ifdef HAVE_OHOS_PLATFORM
++   {
++      /* HarmonyOS: also send to hilog (resolved at run time, no link dep) */
++      typedef int (*hilog_print_fn)(int type, int level, unsigned int domain,
++                                    const char *tag, const char *fmt, ...);
++      static hilog_print_fn hilog_print;
++      static bool hilog_looked_up;
++      if (!hilog_looked_up) {
++         void *h = dlopen("libhilog.so", RTLD_NOW | RTLD_NOLOAD);
++         if (!h)
++            h = dlopen("libhilog.so", RTLD_NOW);
++         if (h)
++            hilog_print = (hilog_print_fn)dlsym(h, "HiLogPrint");
++         if (!hilog_print)
++            hilog_print = (hilog_print_fn)dlsym(RTLD_DEFAULT, "HiLogPrint");
++         hilog_looked_up = true;
++      }
++      if (hilog_print) {
++         /* LOG_CORE=3; levels: DEBUG=3 INFO=4 WARN=5 ERROR=6 */
++         int hl = level == MESA_LOG_ERROR ? 6 : level == MESA_LOG_WARN ? 5 :
++                  level == MESA_LOG_INFO ? 4 : 3;
++         hilog_print(3, hl, 0xD001400, "MESA", "%{public}s", msg);
++      }
++   }
++#endif
++
+    if (msg != local_msg)
+       free(msg);
+ }
+Binary files a/src/util/perf/__pycache__/u_trace.cpython-314.pyc and b/src/util/perf/__pycache__/u_trace.cpython-314.pyc differ
+Binary files a/src/util/__pycache__/drirc_gen.cpython-314.pyc and b/src/util/__pycache__/drirc_gen.cpython-314.pyc differ
+diff --color -ruN -x subprojects a/src/vulkan/meson.build b/src/vulkan/meson.build
+--- a/src/vulkan/meson.build	2026-11-18 07:43:49.000000000 +0500
++++ b/src/vulkan/meson.build	2026-11-19 17:40:01.316288832 +0500
+@@ -54,7 +54,7 @@
+   vulkan_wsi_deps += dep_wayland_client
+   vulkan_wsi_list += '-DVK_USE_PLATFORM_WAYLAND_KHR'
+ endif
+-if system_has_kms_drm and not with_platform_android
++if system_has_kms_drm and not with_platform_android and not with_platform_ohos
+   vulkan_wsi_deps += [dep_libdrm, dep_display_info]
+   vulkan_wsi_list += '-DVK_USE_PLATFORM_DISPLAY_KHR'
+ endif
+Binary files a/src/vulkan/util/__pycache__/vk_entrypoints.cpython-314.pyc and b/src/vulkan/util/__pycache__/vk_entrypoints.cpython-314.pyc differ
+Binary files a/src/vulkan/util/__pycache__/vk_extensions.cpython-314.pyc and b/src/vulkan/util/__pycache__/vk_extensions.cpython-314.pyc differ
+Binary files a/src/vulkan/util/__pycache__/vk_physical_device_features_gen.cpython-314.pyc and b/src/vulkan/util/__pycache__/vk_physical_device_features_gen.cpython-314.pyc differ
+diff --color -ruN -x subprojects a/src/vulkan/wsi/meson.build b/src/vulkan/wsi/meson.build
+--- a/src/vulkan/wsi/meson.build	2026-11-18 07:43:49.000000000 +0500
++++ b/src/vulkan/wsi/meson.build	2026-11-19 17:39:41.734882138 +0500
+@@ -38,7 +38,7 @@
+   files_vulkan_wsi += files('wsi_common_metal.c', 'wsi_common_metal_layer.m')
+ endif
+ 
+-if system_has_kms_drm and not with_platform_android
++if system_has_kms_drm and not with_platform_android and not with_platform_ohos
+   files_vulkan_wsi += files('wsi_common_display.c')
+ endif
+ 
