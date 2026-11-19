@@ -25,7 +25,8 @@ VULKAN = 'libvulkan_freedreno.so'
 ICD = 'system/etc/vulkan/icd.d/freedreno_icd.aarch64.json'
 ICD_CONTENT = {'file_format_version': '1.0.1',
                'ICD': {'library_path': '/' + TARGET + '/' + VULKAN, 'api_version': '1.4.0'}}
-LABELS = [('/system/etc/vulkan(/.*)?', 'system_etc_file')]
+COLORTEST = ('out/op13-mesa/bin/op13-gpu-colortest', 'system/bin/op13-gpu-colortest')
+LABELS = [('/system/etc/vulkan(/.*)?', 'system_etc_file'), ('/system/bin/op13-gpu-colortest', 'system_bin_file')]
 
 
 def digest(path):
@@ -63,10 +64,14 @@ def install(workspace, stage):
     icd = stage / ICD
     icd.parent.mkdir(parents=True, exist_ok=True)
     icd.write_bytes(icd_content())
+    colortest = stage / COLORTEST[1]
+    colortest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(workspace / COLORTEST[0], colortest)
+    colortest.chmod(0o755)
     return {'mesa_source': 'lfdevs/mesa-for-android-container dev/adreno-main 1e6ee4d + OHOS EGL patch',
             'renamed_from': built[0].name,
             'files': {str(p.relative_to(stage)): digest(p) for p in sorted(target.iterdir())},
-            'icd': digest(icd), 'hardware_tested': False}
+            'icd': digest(icd), 'colortest': digest(colortest), 'hardware_tested': False}
 
 
 def verify(after, record):
@@ -78,3 +83,5 @@ def verify(after, record):
     for name in GL:
         assert record['renamed_from'] not in needed(target / name), name
     assert (after / ICD).read_bytes() == icd_content()
+    if 'colortest' in record:
+        assert digest(after / COLORTEST[1]) == record['colortest']

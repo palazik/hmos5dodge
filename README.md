@@ -9,29 +9,32 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 
 ## Status
 
-**Revision 28 boots to the HarmonyOS UI with GPU rendering, the original boot animation and ADB. Revision 29 targets
-the remaining freezes and touch.** Revision 29 is not yet phone-tested.
+**Revision 29 boots to the HarmonyOS UI with GPU rendering, the original boot animation, ADB, and touch and keys reaching
+multimodalinput. Revision 30 targets the remaining SceneBoard freezes.** Revision 30 is not yet phone-tested.
 
-Working on the phone (revision 28):
+Working on the phone (revision 29):
 
 - Boot through DSU to SceneBoard, with the stock kernel and full stock module set.
 - The original HarmonyOS boot video (audio track removed), unscaled.
 - GPU rendering: rebuilt Mesa 27 (freedreno/KGSL) on the Adreno 830, with GPU firmware loaded at boot.
 - ADB over USB (`hmos5dodge`), with the USB-C port forced into device role.
-- Buttons reach multimodalinput; the power key toggles the panel.
+- audio_server starts (HarmonyOS init gets `HOME=/`).
+- Touch and buttons reach multimodalinput (the touchscreen's zero-range axes are widened with `EVIOCSABS`), and the
+  power key wakes the screen.
 
-Fixed in revision 29 (see [REVISION29.md](op13/REVISION29.md)):
+Fixed in revision 30 (see [REVISION30.md](op13/REVISION30.md)):
 
-- SceneBoard was killed every ~30 s because audio_server crash-looped: PulseAudio needs `HOME`, which HarmonyOS init now
-  gets (`HOME=/`, as from the kernel).
-- libinput rejected the touchscreen for axes with `min == max == 0`; the bootstrap now widens them with `EVIOCSABS`.
+- SceneBoard was still killed by its 6 s watchdog because every audio policy call waited 5 s for a default output
+  device. The port now ships the `audio_host` HDF host, the audio HDI chain with the reference port's tinyalsa VDI (which
+  plays to nowhere without a sound card), and the HarmonyOS audio policy config. Touch targets and visible key reactions
+  depend on SceneBoard staying up.
 
 Still open:
 
-- Colors look wrong on the phone (cause not yet identified).
+- Blue and pink are swapped on screen. `/system/bin/op13-gpu-colortest` checks GPU RGBA/BGRA handling over ADB.
 - Vulkan for render_service: Turnip is built and registered, but render_service stays on GLES until the OHOS
   native-buffer/surface extensions exist.
-- Sound, charging, sensors and USB-C detection need the ADSP/CDSP booted (no vendor `audio_host` yet).
+- Real sound, charging, sensors and USB-C detection need the ADSP/CDSP booted.
 - hdc is disabled; ADB is used instead.
 
 Per-revision diagnoses are in `op13/REVISION*.md`; see also the [test instructions](op13/TESTING.md) and the

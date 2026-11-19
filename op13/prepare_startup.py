@@ -146,7 +146,12 @@ def main():
     # The donor input proxy is passthrough and its implementation links the
     # Linux /dev/input userspace backend. Its old input_user_host references
     # libinput_driver.z.so, which is absent and unused by that path.
-    hosts = {'composer_host', 'allocator_host', 'pin_auth_host', 'user_auth_host', 'power_host'}
+    # Revision 30: audio_host provides audio_manager_service for audio_server's
+    # policy.  Without it the policy never loads a default output device, every
+    # volume call waits 5 s ("load default device time out") and SceneBoard is
+    # killed by its 6 s app-freeze watchdog.  Only devices whose donor modules
+    # exist are kept (the ADM, PnP and voice-trigger servers are absent).
+    hosts = {'composer_host', 'allocator_host', 'pin_auth_host', 'user_auth_host', 'power_host', 'audio_host'}
     for name, block in blocks:
         match = re.search(r'hostName\s*=\s*"([^"]+)"', block)
         if match and match.group(1) in hosts:
@@ -154,12 +159,14 @@ def main():
                 # Kirin display-engine integration is separate from the native
                 # DRM composer and must not auto-start in the OP13 process.
                 block = re.sub(r'\s*displayengine_device\s*\{.*?\n\s{12}\}', '', block, flags=re.S)
+            if match.group(1) == 'audio_host':
+                block = re.sub(r'\s*(audio_device|audio_pnp_device|trigger_device)\s*\{.*?\n\s{12}\}', '', block, flags=re.S)
             if match.group(1) == 'power_host':
                 block = re.sub(r'\s*(thermal_device|thermal_daemon_device)\s*\{.*?\n\s{12}\}', '', block, flags=re.S)
             selected.append(block)
             ordered_hosts.append(match.group(1))
     if len(selected) != len(hosts):
-        raise ValueError('expected native display/auth and power/battery hosts')
+        raise ValueError('expected native display/auth, power/battery and audio hosts')
     hcs = 'root {\n module = "default";\n device_info {\n match_attr = "hdf_manager";\n' + '\n'.join(selected) + '\n }\n}\n'
     (output / 'hdf-op13.hcs').write_text(hcs)
     subprocess.run([str(args.hc_gen.resolve()), '-b', '-o', str(output / 'hdf_default.hcb'),

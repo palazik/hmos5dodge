@@ -99,7 +99,7 @@ def patch_image(workspace, output, partition, source, tree, owners, labels, spec
             if re.fullmatch(pattern, '/' + name):
                 label = 'u:object_r:' + value + ':s0'
         if name in ('system/bin/init', 'system/bin/hmos-native-init', 'system/bin/storage_daemon', 'system/bin/hmos-oobedone',
-                    'system/bin/hmos-adbd', 'system/bin/hmos-usb-manager'):
+                    'system/bin/hmos-adbd', 'system/bin/hmos-usb-manager', 'system/bin/op13-gpu-colortest'):
             owner = ['0', '0', '0755']
         if path.is_file():
             path.chmod(int(owner[2], 8))
@@ -280,7 +280,7 @@ def main():
     report = {'status': 'experimental-op13-only-multipart-dsu', 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 29, 'boot_animation': boot_animation, 'init_plugins': init_plugins, 'native_compat': native_compat, 'adb': adb, 'mesa': mesa, 'selinux_mode_changed': False,
+        'handoff_revision': 30, 'boot_animation': boot_animation, 'init_plugins': init_plugins, 'native_compat': native_compat, 'adb': adb, 'mesa': mesa, 'selinux_mode_changed': False,
         'native_graphics_runtime': validation['native_graphics_runtime'],
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,

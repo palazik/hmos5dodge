@@ -94,7 +94,13 @@ def main():
     hcs = (startup / 'hdf-op13.hcs').read_text()
     roots = set(re.findall(r'moduleName\s*=\s*"([^"]+)"', hcs))
     roots |= {'libdisplay_buffer_vdi_impl.z.so', 'libdisplay_composer_vdi_impl.z.so',
-              'libEGL_impl.so', 'libGLESv2_impl.so', 'libhdi_input.z.so', 'libhdi_input_udriver.z.so'}
+              'libEGL_impl.so', 'libGLESv2_impl.so', 'libhdi_input.z.so', 'libhdi_input_udriver.z.so',
+              # Revision 30 audio HDI chain, loaded by path at run time:
+              # audio_primary_driver -> audio_manager_service_4.0 ->
+              # audio_primary_impl_vendor (VDI adapter) -> audio_primary_impl
+              # (the reference port's tinyalsa VDI, which keeps streams
+              # running without a sound card).
+              'libaudio_manager_service_4.0.z.so', 'libaudio_primary_impl_vendor.z.so', 'libaudio_primary_impl.z.so'}
     unavailable_roots = []
     for name in roots:
         if name not in by_name:
@@ -145,7 +151,10 @@ def main():
                 reasons[candidate].add('dependency/reference of ' + name)
                 if candidate not in scanned:
                     queue.append(candidate)
-    configs = {'etc/native_packages.xml'}
+    # Revision 30: audio_server's policy reads its adapters, pipes and default
+    # output device from /vendor/etc/audio (the OP13 vendor has only Android
+    # audio XMLs there).
+    configs = {'etc/native_packages.xml', 'etc/audio/audio_policy_config.xml', 'etc/audio/audio_concurrency_config.xml'}
     for name in donor_meta:
         if name.startswith(('etc/selinux/', 'etc/hdfconfig/', 'etc/passthrough/')):
             configs.add(name)

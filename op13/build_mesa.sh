@@ -76,5 +76,9 @@ llvm-strip -o "$F/libGLESv2_impl.so" "$(find "$B/b" -name 'libGLESv2.so*' -type 
 cp "$F/libGLESv2_impl.so" "$F/libGLESv3_impl.so"
 llvm-strip -o "$F/$(basename "$(find "$B/b" -name 'libgallium-*.so' -type f | head -1)")" "$(find "$B/b" -name 'libgallium-*.so' -type f | head -1)"
 llvm-strip -o "$F/libvulkan_freedreno.so" "$(find "$B/b" -name 'libvulkan_freedreno.so' -type f | head -1)"
+# GPU RGBA/BGRA channel-order self-test (run over ADB on the phone).
+mkdir -p "$OUT/bin"
+"$HERE/build/ohos-clang" -O2 -Wall -Wextra -Werror -I"$SRC/include" "$HERE/op13/mesa/gpu_colortest.c" -o "$OUT/bin/op13-gpu-colortest"
+llvm-strip "$OUT/bin/op13-gpu-colortest"
 ls -la "$F"
 echo "Mesa -> $OUT"

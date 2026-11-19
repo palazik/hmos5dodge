@@ -567,7 +567,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 29; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 30; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -1440,7 +1440,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 29; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 30; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
