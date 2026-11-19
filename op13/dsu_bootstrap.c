@@ -563,7 +563,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 25; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 26; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -662,6 +662,31 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
  * stock g1, and its failure never affects native init.  adbd itself runs with
  * only read-only diagnostic capabilities (see op13/adb/usb_manager.c).
  */
+/*
+ * Revision 26: load the Adreno firmware once, from the Android root.
+ * KGSL reads gen80000_sqe/gmu/zap on the first open of /dev/kgsl-3d0 and
+ * keeps them.  In the guest that first open came from render_service's
+ * sandbox, whose root has no vendor firmware ("Direct firmware load for
+ * gen80000_sqe.fw failed with error -2"), so Mesa fell back to software.
+ * Without ueventd only direct loading exists, resolved in the opener's root:
+ * point the search path at the stock vendor firmware and open the GPU here.
+ */
+static void prime_gpu_firmware(void)
+{
+    const char *param = "/sys/module/firmware_class/parameters/path";
+    int fd = open(param, O_WRONLY | O_CLOEXEC);
+    if (fd < 0 || write(fd, "/vendor/firmware", 16) != 16) log_line("firmware search path not set: errno=%d", errno);
+    else log_line("firmware search path set to /vendor/firmware");
+    if (fd >= 0) close(fd);
+    if (access("/vendor/firmware/gen80000_sqe.fw", R_OK)) log_line("Adreno SQE firmware not visible: errno=%d", errno);
+    char node[512];
+    rootpath(node, sizeof(node), "/dev/kgsl-3d0");
+    int gpu = open(node, O_RDWR | O_CLOEXEC);
+    if (gpu < 0) { log_line("GPU firmware priming open failed: errno=%d", errno); return; }
+    close(gpu);
+    log_line("GPU opened once for firmware load (see kgsl kernel messages)");
+}
+
 static void start_usb_adb(void)
 {
     if (access("/system/bin/hmos-usb-manager", X_OK)) {
@@ -1336,7 +1361,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 25; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 26; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
@@ -1432,6 +1457,7 @@ int main(int argc, char **argv)
     load_stock_modules();
     log_line("stage=device-namespace");
     device_namespace();
+    prime_gpu_firmware();
     const char *brightness = "/sys/class/backlight/panel0-backlight/brightness";
     if (!access(brightness, F_OK)) {
         if (chown(brightness, 0, 1003) || chmod(brightness, 0660)) fatal("backlight ownership");

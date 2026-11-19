@@ -29,11 +29,15 @@ ENV_CFG = 'hmos/startup/system-init/op13_compat_env.cfg'
 #    driver.  0 selects the GLES backend (software Mesa EGL), as the
 #    hmos2sweet reference port forces with the same triggers.
 GPU_API = 'persist.sys.graphic.GpuApitype'
+HILOG_LEVEL = 'hilog.loggable.global'
 ENV = {'jobs': [
     {'name': 'pre-init', 'cmds': ['export UV_USE_IO_URING 0']},
     {'name': 'post-fs-data', 'cmds': ['setparam ' + GPU_API + ' 0']},
     {'name': 'param:' + GPU_API + '=1', 'condition': GPU_API + '=1', 'cmds': ['setparam ' + GPU_API + ' 0']},
     {'name': 'param:' + GPU_API + '=2', 'condition': GPU_API + '=2', 'cmds': ['setparam ' + GPU_API + ' 0']},
+    # 4. Diagnostics: revision 25 showed hilog.loggable.global=W set at 19.76 s,
+    #    dropping all info logs (multimodalinput device adoption is info-level).
+    {'name': 'param:' + HILOG_LEVEL + '=W', 'condition': HILOG_LEVEL + '=W', 'cmds': ['setparam ' + HILOG_LEVEL + ' I']},
 ]}
 LABELS = [('/system/lib64/libop13_code_sign\\.so', 'system_lib_file')]
 

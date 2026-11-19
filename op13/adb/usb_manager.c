@@ -56,18 +56,28 @@ static bool read_value(const char *path, char *value, size_t size)
 
 static bool controller(char *name, size_t size)
 {
-    DIR *dir = opendir("/sys/class/udc");
-    if (!dir) return false;
-    struct dirent *entry;
-    unsigned count = 0;
-    while ((entry = readdir(dir))) {
-        if (entry->d_name[0] == '.') continue;
-        if (strlen(entry->d_name) >= size) { count = 2; break; }
-        strcpy(name, entry->d_name);
-        ++count;
+    // Revision 26: log what exists and prefer the Qualcomm dwc3 controller
+    // (Android uses a600000.dwc3).  It may register late, so wait up to 30 s.
+    for (unsigned attempt = 0; attempt < 60; ++attempt) {
+        DIR *dir = opendir("/sys/class/udc");
+        if (!dir) { if (!attempt) fprintf(stderr, "ADB: /sys/class/udc: %s\n", strerror(errno)); usleep(500000); continue; }
+        struct dirent *entry;
+        char first[256] = {0};
+        bool found = false;
+        unsigned count = 0;
+        while ((entry = readdir(dir))) {
+            if (entry->d_name[0] == '.' || strlen(entry->d_name) >= size) continue;
+            if (!attempt || attempt % 20 == 0) fprintf(stderr, "ADB: UDC candidate %s\n", entry->d_name);
+            if (!count++) snprintf(first, sizeof(first), "%s", entry->d_name);
+            if (!found && strstr(entry->d_name, "dwc3")) { snprintf(name, size, "%s", entry->d_name); found = true; }
+        }
+        closedir(dir);
+        if (!found && count == 1) { snprintf(name, size, "%s", first); found = true; }
+        if (found) { fprintf(stderr, "ADB: using UDC %s (%u present)\n", name, count); return true; }
+        if (!attempt) fprintf(stderr, "ADB: %u UDC(s) present, none usable yet; waiting\n", count);
+        usleep(500000);
     }
-    closedir(dir);
-    return count == 1;
+    return false;
 }
 
 static void drop_daemon_privileges(void)
@@ -103,7 +113,7 @@ static int configure(void)
     pid_t daemon = -1;
     bool unbound = false;
     if (!controller(udc, sizeof(udc))) {
-        fprintf(stderr, "ADB: expected exactly one USB device controller\n");
+        fprintf(stderr, "ADB: no usable USB device controller after 30 s\n");
         return 1;
     }
     if (!directory("/config") ||
