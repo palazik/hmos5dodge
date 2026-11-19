@@ -13,6 +13,7 @@
  * Output: one line per case, "PASS"/"FAIL", expected and actual RGBA bytes.
  */
 #include <dlfcn.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,17 +69,20 @@ FN(void, glDrawArrays, (GLenum, GLint, GLsizei));
 FN(void, glViewport, (GLint, GLint, GLsizei, GLsizei));
 FN(void, glFinish, (void));
 FN(GLenum, glGetError, (void));
+FN(void *, eglGetProcAddress, (const char *));
+FN(void *, eglCreateImageKHR, (EGLDisplay, EGLContext, EGLenum, EGLClientBuffer, const EGLint *));
+FN(void, glEGLImageTargetTexture2DOES, (GLenum, void *));
 
 #define LOAD(name) p_##name = sym(#name)
 
-enum { SIZE = 8 };
+enum { SIZE = 512 };
 static int failures;
 
 static const uint8_t RED[4] = {255, 0, 0, 255}, BLUE[4] = {0, 0, 255, 255};
 
 static void check(const char *name, const uint8_t want[4])
 {
-    uint8_t got[SIZE * SIZE * 4];
+    static uint8_t got[SIZE * SIZE * 4];
     memset(got, 0x5a, sizeof(got));
     p_glReadPixels(0, 0, SIZE, SIZE, GL_RGBA, GL_UNSIGNED_BYTE, got);
     const uint8_t *px = got + (SIZE / 2 * SIZE + SIZE / 2) * 4;
@@ -90,8 +94,8 @@ static void check(const char *name, const uint8_t want[4])
 
 static GLuint texture(GLenum format, const uint8_t *pixel)
 {
-    uint8_t data[SIZE * SIZE * 4];
-    for (int i = 0; i < SIZE * SIZE; ++i) memcpy(data + i * 4, pixel, 4);
+    static uint8_t data[SIZE * SIZE * 4];
+    for (int i = 0; pixel && i < SIZE * SIZE; ++i) memcpy(data + i * 4, pixel, 4);
     GLuint t;
     p_glGenTextures(1, &t);
     p_glBindTexture(GL_TEXTURE_2D, t);
@@ -136,11 +140,73 @@ static void draw(GLuint tex)
     p_glFinish();
 }
 
+/* render_service path: GPU rendering into / sampling from a HarmonyOS native
+ * buffer imported with EGL_NATIVE_BUFFER_OHOS, checked by mapping the buffer
+ * on the CPU (the composer scans these bytes out as DRM ABGR8888 = R,G,B,A). */
+#define EGL_NATIVE_BUFFER_OHOS 0x34E1
+typedef struct { int32_t width, height, format, usage, stride; } NbConfig;
+static void native_buffer_tests(EGLDisplay dpy)
+{
+    void *nb = dlopen("/system/lib64/chipset-pub-sdk/libnative_buffer.so", RTLD_NOW);
+    void *nw = dlopen("/system/lib64/chipset-pub-sdk/libnative_window.so", RTLD_NOW);
+    if (!nb || !nw) { printf("SKIP native buffer: %s\n", dlerror()); return; }
+    void *(*alloc)(const NbConfig *) = dlsym(nb, "OH_NativeBuffer_Alloc");
+    int (*map)(void *, void **) = dlsym(nb, "OH_NativeBuffer_Map");
+    int (*unmap)(void *) = dlsym(nb, "OH_NativeBuffer_Unmap");
+    void (*getconfig)(void *, NbConfig *) = dlsym(nb, "OH_NativeBuffer_GetConfig");
+    void *(*wrap)(void *) = dlsym(nw, "OH_NativeWindow_CreateNativeWindowBufferFromNativeBuffer");
+    p_eglCreateImageKHR = p_eglGetProcAddress("eglCreateImageKHR");
+    p_glEGLImageTargetTexture2DOES = p_eglGetProcAddress("glEGLImageTargetTexture2DOES");
+    if (!alloc || !map || !unmap || !wrap || !p_eglCreateImageKHR || !p_glEGLImageTargetTexture2DOES) {
+        printf("SKIP native buffer: missing entry points\n"); return;
+    }
+    const NbConfig want = {SIZE, SIZE, 12 /* RGBA_8888 */, (1 << 0) | (1 << 1) | (1 << 3) | (1 << 8) | (1 << 9), 0};
+    for (int pass = 0; pass < 2; ++pass) {
+        void *buffer = alloc(&want);
+        if (!buffer) { printf("FAIL OH_NativeBuffer_Alloc\n"); ++failures; return; }
+        NbConfig got = want;
+        if (getconfig) getconfig(buffer, &got);
+        void *image = p_eglCreateImageKHR(dpy, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_OHOS, wrap(buffer), NULL);
+        if (!image) { printf("FAIL eglCreateImageKHR(EGL_NATIVE_BUFFER_OHOS) 0x%x\n", p_eglGetError()); ++failures; return; }
+        GLuint tex;
+        p_glGenTextures(1, &tex);
+        p_glBindTexture(GL_TEXTURE_2D, tex);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        p_glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        p_glEGLImageTargetTexture2DOES(GL_TEXTURE_2D, image);
+        uint8_t *bytes = NULL;
+        if (pass == 0) {
+            /* GPU writes red into the native buffer; check the raw bytes. */
+            target(tex);
+            p_glClearColor(1, 0, 0, 1); p_glClear(GL_COLOR_BUFFER_BIT); p_glFinish();
+            if (map(buffer, (void **)&bytes) || !bytes) { printf("FAIL map\n"); ++failures; return; }
+            const uint8_t *px = bytes + (SIZE / 2) * got.stride + (SIZE / 2) * 4;
+            bool ok = px[0] == 255 && px[1] == 0 && px[2] == 0 && px[3] == 255;
+            if (!ok) ++failures;
+            printf("%s %-40s want ff0000ff got %02x%02x%02x%02x (stride %d)\n", ok ? "PASS" : "FAIL",
+                   "GPU clear red -> native RGBA_8888 bytes", px[0], px[1], px[2], px[3], got.stride);
+        } else {
+            /* CPU writes blue as R,G,B,A bytes; the GPU samples it. */
+            if (map(buffer, (void **)&bytes) || !bytes) { printf("FAIL map\n"); ++failures; return; }
+            for (int y = 0; y < SIZE; ++y)
+                for (int x = 0; x < SIZE; ++x) memcpy(bytes + y * got.stride + x * 4, BLUE, 4);
+            unmap(buffer);
+            target(texture(GL_RGBA, NULL));
+            draw(tex);
+            check("sample native RGBA_8888 (blue) -> RGBA", BLUE);
+        }
+    }
+}
+
 int main(void)
 {
-    egl_lib = dlopen("libEGL.so", RTLD_NOW);
-    gl_lib = dlopen("libGLESv2.so", RTLD_NOW);
-    if (!egl_lib || !gl_lib) { printf("FAIL cannot load libEGL/libGLESv2: %s\n", dlerror()); return 2; }
+    setvbuf(stdout, NULL, _IONBF, 0);
+    /* Use Mesa's own libraries, not the HarmonyOS GL wrapper: the wrapper's GL
+     * entry points dispatch through per-thread hooks that only its own EGL
+     * MakeCurrent installs (glGetString returned NULL and the test crashed). */
+    egl_lib = dlopen("/vendor/lib64/chipsetsdk/libEGL_impl.so", RTLD_NOW | RTLD_GLOBAL);
+    gl_lib = dlopen("/vendor/lib64/chipsetsdk/libGLESv2_impl.so", RTLD_NOW | RTLD_GLOBAL);
+    if (!egl_lib || !gl_lib) { printf("FAIL cannot load Mesa libEGL_impl/libGLESv2_impl: %s\n", dlerror()); return 2; }
     LOAD(eglGetDisplay); LOAD(eglInitialize); LOAD(eglChooseConfig); LOAD(eglCreatePbufferSurface);
     LOAD(eglCreateContext); LOAD(eglMakeCurrent); LOAD(eglGetError); LOAD(glGetString); LOAD(glClearColor);
     LOAD(glClear); LOAD(glReadPixels); LOAD(glGenTextures); LOAD(glBindTexture); LOAD(glTexImage2D);
@@ -148,9 +214,14 @@ int main(void)
     LOAD(glCheckFramebufferStatus); LOAD(glCreateShader); LOAD(glShaderSource); LOAD(glCompileShader);
     LOAD(glCreateProgram); LOAD(glAttachShader); LOAD(glBindAttribLocation); LOAD(glLinkProgram); LOAD(glUseProgram);
     LOAD(glVertexAttribPointer); LOAD(glEnableVertexAttribArray); LOAD(glDrawArrays); LOAD(glViewport); LOAD(glFinish);
-    LOAD(glGetError);
+    LOAD(glGetError); LOAD(eglGetProcAddress);
 
-    EGLDisplay dpy = p_eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    /* The HarmonyOS wrapper opens the OHOS platform explicitly. */
+    EGLDisplay (*get_platform_display)(EGLenum, void *, const EGLAttrib *) =
+        (EGLDisplay (*)(EGLenum, void *, const EGLAttrib *))p_eglGetProcAddress("eglGetPlatformDisplay");
+    EGLDisplay dpy = get_platform_display ? get_platform_display(0x34E0 /* EGL_PLATFORM_OHOS_KHR */, EGL_DEFAULT_DISPLAY, NULL)
+                                          : p_eglGetDisplay(EGL_DEFAULT_DISPLAY);
+    printf("display: %s\n", get_platform_display ? "EGL_PLATFORM_OHOS_KHR" : "default");
     EGLint major = 0, minor = 0, n = 0;
     if (!p_eglInitialize(dpy, &major, &minor)) { printf("FAIL eglInitialize 0x%x\n", p_eglGetError()); return 2; }
     const EGLint attrs[] = {EGL_SURFACE_TYPE, EGL_PBUFFER_BIT, EGL_RENDERABLE_TYPE, EGL_OPENGL_ES2_BIT,
@@ -162,7 +233,10 @@ int main(void)
     EGLSurface surface = p_eglCreatePbufferSurface(dpy, config, pb);
     EGLContext context = p_eglCreateContext(dpy, config, EGL_NO_CONTEXT, ctx_attrs);
     if (!p_eglMakeCurrent(dpy, surface, surface, context)) { printf("FAIL eglMakeCurrent 0x%x\n", p_eglGetError()); return 2; }
-    printf("EGL %d.%d renderer: %s | %s\n", major, minor, p_glGetString(GL_RENDERER), p_glGetString(GL_VERSION));
+    const char *renderer = (const char *)p_glGetString(GL_RENDERER);
+    printf("EGL %d.%d renderer: %s | %s\n", major, minor, renderer ? renderer : "(null)",
+           p_glGetString(GL_VERSION) ? (const char *)p_glGetString(GL_VERSION) : "(null)");
+    if (!renderer) { printf("FAIL no current GL context\n"); return 2; }
     const char *ext = (const char *)p_glGetString(GL_EXTENSIONS);
     printf("GL_EXT_texture_format_BGRA8888: %s\n", ext && strstr(ext, "GL_EXT_texture_format_BGRA8888") ? "yes" : "no");
 
@@ -195,6 +269,8 @@ int main(void)
     target(texture(GL_RGBA, NULL));
     draw(bgra_rt);
     check("render blue into BGRA, sample -> RGBA", BLUE);
+
+    native_buffer_tests(dpy);
 
     printf("RESULT %s (%d failing)\n", failures ? "FAIL" : "PASS", failures);
     return failures ? 1 : 0;

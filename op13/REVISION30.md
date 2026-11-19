@@ -48,3 +48,20 @@ volume or group call waits 5 s for it.
 - Colors: fix after the self-test result.
 - Vulkan for render_service.
 - Real sound needs the ADSP and OP13 mixer paths.
+
+## Revision 30 phone result (2026-11-20)
+
+Touch and buttons work; SceneBoard stays up (no SceneBoard appfreeze). The system feels a little laggy. Blue/pink is
+still swapped.
+
+`op13-gpu-colortest`, run once over ADB from /dev/shm with the owner's permission and then deleted, against Mesa's
+`libEGL_impl.so` on `EGL_PLATFORM_OHOS_KHR` (Adreno (TM) 830v1, OpenGL ES 3.2), passes every case:
+
+- clear and sample through RGBA and BGRA textures, both linear and UBWC-tiled at 512x512;
+- GPU clear red into an `OH_NativeBuffer` RGBA_8888 imported with `EGL_NATIVE_BUFFER_OHOS`; the CPU reads `ff0000ff`
+  (R,G,B,A);
+- the GPU samples CPU-written R,G,B,A blue from a native buffer correctly.
+
+So Mesa and the GPU produce correctly ordered RGBA_8888 buffers. The swap is after the GPU: render_service's Skia surface
+color type, or the display scanout of DRM ABGR8888. (Through the HarmonyOS GL wrapper the test cannot get a context,
+because the wrapper's GL hooks are set only by its own EGL.)
