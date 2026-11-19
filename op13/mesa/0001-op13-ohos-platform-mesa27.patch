@@ -1288,6 +1288,30 @@ diff --color -ruN -x subprojects a/src/gallium/winsys/sw/kms-dri/kms_dri_sw_wins
  static bool
  kms_sw_displaytarget_get_handle(struct sw_winsys *winsys,
                                  struct sw_displaytarget *dt,
+diff --color -ruN -x subprojects a/src/loader/loader.c b/src/loader/loader.c
+--- a/src/loader/loader.c	2026-11-18 07:43:49.000000000 +0500
++++ b/src/loader/loader.c	2026-11-19 18:20:45.800515854 +0500
+@@ -814,6 +814,20 @@
+       }
+    }
+ 
++#if defined(HAVE_OHOS_PLATFORM) && defined(__linux__)
++   /* HarmonyOS on Qualcomm: the GPU is the downstream KGSL device, not a DRM
++    * node, so DRM version/PCI queries fail on its fd.  Recognise it directly
++    * (same check as the TERMUX_VA_GPU_BACKEND=kgsl path above, but without
++    * needing that environment in system services such as render_service). */
++   {
++      struct stat fd_stat, kgsl_stat;
++      if (fstat(fd, &fd_stat) == 0 && S_ISCHR(fd_stat.st_mode) &&
++          stat("/dev/kgsl-3d0", &kgsl_stat) == 0 &&
++          fd_stat.st_rdev == kgsl_stat.st_rdev)
++         return strdup("kgsl");
++   }
++#endif
++
+ #if defined(USE_DRICONF)
+    driver = loader_get_dri_config_driver(fd);
+    if (driver)
 Binary files a/src/mesa/glapi/glapi/gen/__pycache__/apiexec.cpython-314.pyc and b/src/mesa/glapi/glapi/gen/__pycache__/apiexec.cpython-314.pyc differ
 Binary files a/src/mesa/glapi/glapi/gen/__pycache__/gl_XML.cpython-314.pyc and b/src/mesa/glapi/glapi/gen/__pycache__/gl_XML.cpython-314.pyc differ
 Binary files a/src/mesa/glapi/glapi/gen/__pycache__/glX_XML.cpython-314.pyc and b/src/mesa/glapi/glapi/gen/__pycache__/glX_XML.cpython-314.pyc differ

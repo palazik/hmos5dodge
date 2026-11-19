@@ -563,7 +563,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 27; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 28; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -685,6 +685,33 @@ static void prime_gpu_firmware(void)
     if (gpu < 0) { log_line("GPU firmware priming open failed: errno=%d", errno); return; }
     close(gpu);
     log_line("GPU opened once for firmware load (see kgsl kernel messages)");
+}
+
+/*
+ * Revision 28: put the USB-C port in device role from the Android root.
+ * Under DSU HarmonyOS the ADSP (which runs USB-C detection) is not booted, so
+ * a600000.ssusb-role-switch stays "none" and no UDC exists.  The guest /sys
+ * is read-only ("Read-only file system" in revision 27); ColorOS shows the
+ * role file is rw-r--r-- (userspace-controllable), so set it here.
+ */
+static void force_usb_device_role(void)
+{
+    const char *role = "/sys/class/usb_role/a600000.ssusb-role-switch/role";
+    for (unsigned i = 0; i < 30 && access(role, F_OK); ++i) {
+        struct timespec delay = {.tv_sec = 0, .tv_nsec = 100000000};
+        while (nanosleep(&delay, &delay) && errno == EINTR) {}
+    }
+    char current[64] = {0};
+    if (read_text(role, current, sizeof(current))) { log_line("USB role switch unavailable: errno=%d", errno); return; }
+    current[strcspn(current, "\r\n")] = 0;
+    int fd = open(role, O_WRONLY | O_CLOEXEC);
+    bool ok = fd >= 0 && write(fd, "device", 6) == 6;
+    int saved = errno;
+    if (fd >= 0) close(fd);
+    char after[64] = {0};
+    read_text(role, after, sizeof(after));
+    after[strcspn(after, "\r\n")] = 0;
+    log_line("USB role switch: %s -> device %s; now %s", current, ok ? "ok" : strerror(saved), after);
 }
 
 static void start_usb_adb(void)
@@ -1361,7 +1388,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 27; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 28; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
@@ -1458,6 +1485,7 @@ int main(int argc, char **argv)
     log_line("stage=device-namespace");
     device_namespace();
     prime_gpu_firmware();
+    force_usb_device_role();
     const char *brightness = "/sys/class/backlight/panel0-backlight/brightness";
     if (!access(brightness, F_OK)) {
         if (chown(brightness, 0, 1003) || chmod(brightness, 0660)) fatal("backlight ownership");
