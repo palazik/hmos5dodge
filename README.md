@@ -10,7 +10,7 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 ## Status
 
 **Revision 30 boots to a usable HarmonyOS UI: GPU rendering, the original boot animation, touch, buttons, audio
-services and ADB. Revision 31 targets colors, stutter, heat and Vulkan.** Revision 31 is not yet phone-tested.
+services and ADB. Revision 32 targets colors and 120 Hz smoothness.** Revision 32 is not yet phone-tested.
 
 Working on the phone (revision 30):
 
@@ -21,15 +21,17 @@ Working on the phone (revision 30):
 - Touch and buttons, with SceneBoard stable (audio HDI host, `HOME=/`, touchscreen axis fix).
 - ADB over USB (`hmos5dodge`).
 
-Changes in revision 31 (see [REVISION31.md](op13/REVISION31.md)):
+Changes in revisions 31-32 (see [REVISION31.md](op13/REVISION31.md), [REVISION32.md](op13/REVISION32.md)):
 
-- Colors: render_service's own screenshot is correct but the panel showed red and blue exchanged, so RGBA buffers are now
-  scanned out as ARGB8888 (overridable live via `/dev/shm/op13-scanout`).
+- Colors: render_service's output and the scanned-out buffer are correct, but the panel path rotates the channels
+  (ABGR shown as B,R,G; ARGB as R,B,G). Revision 32 programs the DSPP PCC with the inverse rotation
+  (live override via `/dev/shm/op13-pcc`).
+- Smoothness: WALT with ~44% CPU floors and a 525 MHz GPU floor (revision 31's bare WALT dropped below 120 Hz).
 - Heat: the stock kernel's `performance` CPU governor is replaced by WALT/schedutil.
 - Stutter: no per-frame chipset-vsync IPC or composer error logs.
 - CPU: apps now find the mapper bridges in `/vendor/lib64/chipsetsdk`, with a HarmonyOS libdrm Android cannot shadow.
-- Vulkan: an ICD shim adds `VK_OHOS_native_buffer`/`VK_OHOS_external_memory` to Turnip (`op13-vk-colortest` checks it);
-  render_service stays on GLES until that passes on the phone.
+- Vulkan: an ICD shim adds `VK_OHOS_native_buffer`/`VK_OHOS_external_memory` to Turnip; `op13-vk-colortest` passes on
+  the phone. render_service is still on GLES.
 - hdc over USB alongside ADB.
 
 Still open:

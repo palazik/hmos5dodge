@@ -122,6 +122,7 @@ struct HmosShadow {
 static HmosShadow g_shadow[3];
 static int g_shadowIdx = 0, g_shadowW = 0, g_shadowH = 0;
 static uint32_t g_shadowFmt = 0, g_overrideFb = 0;
+static void HmosAddPcc(drmModeAtomicReqPtr req, int drmFd, uint32_t crtcId);
 
 static void HmosShadowFree(int drmFd)
 {
@@ -809,6 +810,7 @@ int32_t HdiDrmComposition::CommitMinimal(uint64_t *outFence)
     drmModeAtomicAddProperty(r, pid, plane->GetPropCrtc_wId(), w);
     drmModeAtomicAddProperty(r, pid, plane->GetPropCrtc_hId(), h);
     drmModeAtomicAddProperty(r, pid, plane->GetPropZposId(), 0);
+    HmosAddPcc(r, mDrmDevice->GetDrmFd(), mCrtc->GetId());
     int fence = layer->GetAcquireFenceFd();
     if (g_overrideFb == 0 && fence >= 0 && plane->GetPropFenceInId() != 0) {
         drmModeAtomicAddProperty(r, pid, plane->GetPropFenceInId(), fence);
@@ -901,6 +903,114 @@ static void HmosDumpFrame(int drmFd, uint32_t gem, uint32_t drmFormat, int w, in
     munmap(map, size);
 }
 
+/*
+ * Revision 32: undo the colour rotation of the OP13 panel path.
+ *
+ * Revision 31's frame dump proved the scanned-out buffer holds correct R,G,B
+ * bytes, yet the panel shows them rotated: read as ABGR8888 (R,G,B) the screen
+ * shows (B,R,G) -- blue as pink, revision 30 -- and read as ARGB8888 (B,G,R) it
+ * shows (R,B,G) -- blue as green, revision 31.  No byte order or fourcc undoes
+ * a rotation.  On ColorOS the display HAL programs the DSPP colour blocks with
+ * panel calibration at boot; nothing does under HarmonyOS.  Program the DSPP
+ * PCC (polynomial colour correction) with the inverse rotation instead:
+ * out R = in G, out G = in B, out B = in R.
+ *
+ * /dev/shm/op13-pcc (re-read once a second): "off" (property cleared),
+ * "rotate" (default above), "rotate2" (the other direction), and optional
+ * "scale=N" for the coefficient fixed-point unit (default 32768 = 1.0).
+ */
+struct OhosPccCoeff { uint32_t c, r, g, b, rg, gb, rb, rgb; };
+struct OhosPcc {
+    uint64_t flags;
+    OhosPccCoeff r, g, b;
+    uint32_t r_rr, r_gg, r_bb, g_rr, g_gg, g_bb, b_rr, b_gg, b_bb;
+};
+
+static uint32_t HmosPccPropId(int drmFd, uint32_t crtcId)
+{
+    static uint32_t cached = 0, cachedCrtc = 0;
+    static bool listed = false;
+    if (cached != 0 && cachedCrtc == crtcId) return cached;
+    drmModeObjectPropertiesPtr props = drmModeObjectGetProperties(drmFd, crtcId, DRM_MODE_OBJECT_CRTC);
+    if (props == nullptr) return 0;
+    std::string names;
+    for (uint32_t i = 0; i < props->count_props; i++) {
+        drmModePropertyPtr prop = drmModeGetProperty(drmFd, props->props[i]);
+        if (prop == nullptr) continue;
+        if (!listed) { names += prop->name; names += ' '; }
+        if (strncmp(prop->name, "SDE_DSPP_PCC", 12) == 0) { cached = prop->prop_id; cachedCrtc = crtcId; }
+        drmModeFreeProperty(prop);
+    }
+    drmModeFreeObjectProperties(props);
+    if (!listed) {
+        listed = true;
+        DISPLAY_LOGI("crtc %{public}u properties: %{public}s", crtcId, names.c_str());
+        DISPLAY_LOGI("colour fix: PCC property %{public}s (id %{public}u)", cached ? "found" : "NOT FOUND", cached);
+    }
+    return cached;
+}
+
+/* returns the blob id to set (0 = clear), and whether it changed */
+static uint32_t HmosPccBlob(int drmFd, bool &changed)
+{
+    static uint32_t blob = 0;
+    static int mode = -1;
+    static uint32_t scale = 0;
+    static int64_t lastCheck = 0;
+    changed = false;
+    int64_t now = HmosNowMs();
+    if (mode >= 0 && now - lastCheck < 1000) return blob;
+    lastCheck = now;
+    int wantMode = 1;
+    uint32_t wantScale = 32768;
+    char text[64] = {0};
+    int fd = open("/dev/shm/op13-pcc", O_RDONLY | O_CLOEXEC);
+    if (fd >= 0) {
+        ssize_t n = read(fd, text, sizeof(text) - 1);
+        close(fd);
+        if (n > 0) {
+            if (strstr(text, "off")) wantMode = 0;
+            else if (strstr(text, "rotate2")) wantMode = 2;
+            const char *sc = strstr(text, "scale=");
+            if (sc) wantScale = static_cast<uint32_t>(strtoul(sc + 6, nullptr, 0));
+        }
+    }
+    if (wantMode == mode && wantScale == scale) return blob;
+    if (blob != 0) drmModeDestroyPropertyBlob(drmFd, blob);
+    blob = 0;
+    if (wantMode != 0) {
+        OhosPcc pcc = {};
+        if (wantMode == 1) {        /* out R = G, out G = B, out B = R */
+            pcc.r.g = wantScale; pcc.g.b = wantScale; pcc.b.r = wantScale;
+        } else {                    /* out R = B, out G = R, out B = G */
+            pcc.r.b = wantScale; pcc.g.r = wantScale; pcc.b.g = wantScale;
+        }
+        if (drmModeCreatePropertyBlob(drmFd, &pcc, sizeof(pcc), &blob) != 0) {
+            DISPLAY_LOGE("colour fix: PCC blob creation failed errno %{public}d", errno);
+            blob = 0;
+        }
+    }
+    DISPLAY_LOGI("colour fix: PCC %{public}s scale %{public}u blob %{public}u",
+        wantMode == 0 ? "off" : wantMode == 1 ? "rotate" : "rotate2", wantScale, blob);
+    mode = wantMode;
+    scale = wantScale;
+    changed = true;
+    return blob;
+}
+
+static void HmosAddPcc(drmModeAtomicReqPtr req, int drmFd, uint32_t crtcId)
+{
+    uint32_t prop = HmosPccPropId(drmFd, crtcId);
+    if (prop == 0) return;
+    bool changed = false;
+    uint32_t blob = HmosPccBlob(drmFd, changed);
+    static bool applied = false;
+    if (changed || !applied) {
+        drmModeAtomicAddProperty(req, crtcId, prop, blob);
+        applied = true;
+    }
+}
+
 int32_t HdiDrmComposition::ApplyLocked(bool modeSet)
 {
     mLastApplyMs = HmosNowMs();
@@ -956,6 +1066,7 @@ int32_t HdiDrmComposition::ApplyLocked(bool modeSet)
 
     /*  Bind the plane not used by other crtcs to the crtc. */
     FindPlaneAndApply(atomicReqPtr.Get());
+    HmosAddPcc(atomicReqPtr.Get(), drmFd, mCrtc->GetId());
     /* Remove useless planes from the drm */
     RemoveUnusePlane(atomicReqPtr.Get());
     /* verbose log plane on top (added last: libdrm keeps the last value

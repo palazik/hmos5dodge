@@ -567,7 +567,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 31; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 32; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -798,8 +798,39 @@ static void set_cpu_governors(void)
         available[strcspn(available, "\r\n")] = 0;
         log_line("cpufreq %s: %s -> %s (%s; available: %s)", entry->d_name, before, after,
                  choice ? (ok ? "ok" : "write failed") : "no walt/schedutil", available);
+        /* Revision 32: WALT without Android's touch/top-app boosts let the
+         * clocks sink too low for 120 Hz (revision 31 stuttered).  Keep a floor
+         * of ~44% of the maximum: far below revision 30's permanent maximum. */
+        char freqs[512] = {0}, max_text[32] = {0};
+        snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpufreq/%.32s/scaling_available_frequencies", entry->d_name);
+        read_text(path, freqs, sizeof(freqs));
+        snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpufreq/%.32s/cpuinfo_max_freq", entry->d_name);
+        read_text(path, max_text, sizeof(max_text));
+        unsigned long max = strtoul(max_text, NULL, 10), target = max * 44 / 100, floor_freq = 0;
+        for (char *p = freqs; *p;) {
+            char *end;
+            unsigned long f = strtoul(p, &end, 10);
+            if (end == p) break;
+            if (f >= target && (!floor_freq || f < floor_freq)) floor_freq = f;
+            p = end;
+        }
+        if (floor_freq) {
+            char value[32];
+            int len = snprintf(value, sizeof(value), "%lu", floor_freq);
+            snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpufreq/%.32s/scaling_min_freq", entry->d_name);
+            int fd = open(path, O_WRONLY | O_CLOEXEC);
+            bool wrote = fd >= 0 && write(fd, value, (size_t)len) == len;
+            if (fd >= 0) close(fd);
+            log_line("cpufreq %s: minimum %lu kHz (%s)", entry->d_name, floor_freq, wrote ? "ok" : "write failed");
+        }
     }
     if (policies) closedir(policies);
+    /* GPU floor for the 1440x3168 120 Hz composition (max 1100 MHz) */
+    const char *gpu_min = "/sys/class/kgsl/kgsl-3d0/devfreq/min_freq";
+    int fd = open(gpu_min, O_WRONLY | O_CLOEXEC);
+    bool wrote = fd >= 0 && write(fd, "525000000", 9) == 9;
+    if (fd >= 0) close(fd);
+    log_line("gpu devfreq minimum 525 MHz (%s)", wrote ? "ok" : "write failed");
 }
 
 static void start_usb_adb(void)
@@ -1476,7 +1507,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 31; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 32; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");

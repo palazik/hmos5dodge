@@ -129,7 +129,7 @@ static int configure(void)
 {
     char udc[256] = {0}, previous_path[512] = {0}, previous_udc[256] = {0};
     pid_t daemon = -1;
-    bool unbound = false;
+    bool unbound = false, hdc_mounted = false, hdc_linked = false;
     if (!controller(udc, sizeof(udc))) {
         fprintf(stderr, "ADB: no usable USB device controller after 30 s\n");
         return 1;
@@ -175,10 +175,14 @@ static int configure(void)
             hdc = !access(HDC_FFS "/ep1", F_OK) && !access(HDC_FFS "/ep2", F_OK);
             if (!hdc) usleep(100000);
         }
-        if (hdc && !symlink(GADGET "/functions/ffs.hdc", GADGET "/configs/b.1/f2"))
+        if (hdc && !symlink(GADGET "/functions/ffs.hdc", GADGET "/configs/b.1/f2")) {
+            hdc_linked = true;
             fprintf(stderr, "HDC: hdcd function added to the gadget\n");
-        else
-            fprintf(stderr, "HDC: hdcd endpoints %s; binding ADB only\n", hdc ? "present but link failed" : "not ready after 20 s");
+        } else {
+            fprintf(stderr, "HDC: hdcd endpoints %s; binding ADB only, will add hdc when it is ready\n",
+                    hdc ? "present but link failed" : "not ready after 20 s");
+        }
+        hdc_mounted = true;
     } else {
         fprintf(stderr, "HDC: FunctionFS setup failed: %s; binding ADB only\n", strerror(errno));
     }
@@ -207,7 +211,22 @@ static int configure(void)
     // ADB is diagnostic: its exit never kills native init or reboots the phone.
     for (unsigned restarts = 0; restarts < 3; ++restarts) {
         int status;
-        while (waitpid(daemon, &status, 0) < 0) if (errno != EINTR) goto fail;
+        // Revision 32: init starts hdcd late (262 s in revision 31); poll so it
+        // can be added to the gadget whenever its endpoints appear.
+        for (;;) {
+            pid_t done = waitpid(daemon, &status, WNOHANG);
+            if (done == daemon) break;
+            if (done < 0 && errno != EINTR) goto fail;
+            if (hdc_mounted && !hdc_linked && !access(HDC_FFS "/ep1", F_OK) && !access(HDC_FFS "/ep2", F_OK)) {
+                write_value(GADGET "/UDC", "\n");
+                hdc_linked = !symlink(GADGET "/functions/ffs.hdc", GADGET "/configs/b.1/f2");
+                bool rebound = write_value(GADGET "/UDC", udc);
+                fprintf(stderr, "HDC: hdcd ready later; function %s, gadget %s\n", hdc_linked ? "added" : "link failed",
+                        rebound ? "rebound" : "REBIND FAILED");
+                if (!rebound) goto fail;
+            }
+            sleep(1);
+        }
         fprintf(stderr, "ADB: daemon exited status=%d, restart=%u\n", status, restarts + 1);
         sleep(1);
         daemon = start_daemon();

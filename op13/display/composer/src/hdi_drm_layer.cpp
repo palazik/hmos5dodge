@@ -79,7 +79,9 @@ void ReleaseEntry(int drmFd, const FbCacheEntry &e)
  */
 uint32_t ScanoutFormat(uint32_t native)
 {
-    static uint32_t overrideMode = 1; /* 0 native, 1 swap, 2 explicit */
+    /* Revision 32: native by default; the panel path rotates channels, which the
+     * composer now undoes with the DSPP PCC matrix (hdi_drm_composition.cpp). */
+    static uint32_t overrideMode = 0; /* 0 native, 1 swap, 2 explicit */
     static uint32_t explicitFourcc = 0;
     static int64_t lastCheck = 0;
     struct timespec ts;
@@ -87,7 +89,7 @@ uint32_t ScanoutFormat(uint32_t native)
     int64_t now = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
     if (now - lastCheck > 1000) {
         lastCheck = now;
-        uint32_t mode = 1, fourcc = 0;
+        uint32_t mode = 0, fourcc = 0;
         char text[16] = {0};
         int fd = open("/dev/shm/op13-scanout", O_RDONLY | O_CLOEXEC);
         if (fd >= 0) {
@@ -97,6 +99,8 @@ uint32_t ScanoutFormat(uint32_t native)
                 text[strcspn(text, "\r\n ")] = 0;
                 if (!strcmp(text, "native")) {
                     mode = 0;
+                } else if (!strcmp(text, "swap")) {
+                    mode = 1;
                 } else if (strlen(text) == 4) {
                     mode = 2;
                     fourcc = fourcc_code(text[0], text[1], text[2], text[3]);
