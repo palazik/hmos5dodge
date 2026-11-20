@@ -14,6 +14,11 @@
  */
 
 #include <linux/dma-buf.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cstring>
+#include <ctime>
+#include <drm_fourcc.h>
 #include <sys/ioctl.h>
 #include "hdi_drm_layer.h"
 #include <mutex>
@@ -59,6 +64,67 @@ void ReleaseEntry(int drmFd, const FbCacheEntry &e)
     gemClose.handle = e.gem;
     drmIoctl(drmFd, DRM_IOCTL_GEM_CLOSE, &gemClose);
 }
+
+/*
+ * Revision 31: scanout channel order.  render_service's own screenshot of
+ * revision 30 has correct colours (blue wallpaper, orange Video icon) and the
+ * GPU writes R,G,B,A bytes into RGBA_8888 buffers, yet the panel shows red and
+ * blue exchanged (light-blue wallpaper as peach/pink, orange as blue) while
+ * the buffer is scanned out as DRM ABGR8888.  So scan RGBA/RGBX buffers out as
+ * ARGB/XRGB8888, which cancels the exchange.
+ *
+ * /dev/shm/op13-scanout (re-read once a second) overrides this for on-device
+ * checks: "native" = plain table mapping, "swap" = the default above, or a
+ * four-character DRM fourcc such as "XR24" used for every 32-bit RGB buffer.
+ */
+uint32_t ScanoutFormat(uint32_t native)
+{
+    static uint32_t overrideMode = 1; /* 0 native, 1 swap, 2 explicit */
+    static uint32_t explicitFourcc = 0;
+    static int64_t lastCheck = 0;
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    int64_t now = (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    if (now - lastCheck > 1000) {
+        lastCheck = now;
+        uint32_t mode = 1, fourcc = 0;
+        char text[16] = {0};
+        int fd = open("/dev/shm/op13-scanout", O_RDONLY | O_CLOEXEC);
+        if (fd >= 0) {
+            ssize_t n = read(fd, text, sizeof(text) - 1);
+            close(fd);
+            if (n > 0) {
+                text[strcspn(text, "\r\n ")] = 0;
+                if (!strcmp(text, "native")) {
+                    mode = 0;
+                } else if (strlen(text) == 4) {
+                    mode = 2;
+                    fourcc = fourcc_code(text[0], text[1], text[2], text[3]);
+                }
+            }
+        }
+        if (mode != overrideMode || fourcc != explicitFourcc) {
+            DISPLAY_LOGI("scanout channel order: %{public}s", mode == 0 ? "native" : mode == 1 ? "swap R/B" : text);
+        }
+        overrideMode = mode;
+        explicitFourcc = fourcc;
+    }
+    bool rgb32 = native == DRM_FORMAT_ABGR8888 || native == DRM_FORMAT_XBGR8888 ||
+                 native == DRM_FORMAT_ARGB8888 || native == DRM_FORMAT_XRGB8888;
+    if (!rgb32 || overrideMode == 0) {
+        return native;
+    }
+    if (overrideMode == 2 && explicitFourcc != 0) {
+        return explicitFourcc;
+    }
+    switch (native) {
+        case DRM_FORMAT_ABGR8888: return DRM_FORMAT_ARGB8888;
+        case DRM_FORMAT_XBGR8888: return DRM_FORMAT_XRGB8888;
+        case DRM_FORMAT_ARGB8888: return DRM_FORMAT_ABGR8888;
+        case DRM_FORMAT_XRGB8888: return DRM_FORMAT_XBGR8888;
+        default: return native;
+    }
+}
 } // namespace
 
 void DrmGemBuffer::Init(int drmFd, HdiLayerBuffer &hdl)
@@ -76,7 +142,7 @@ void DrmGemBuffer::Init(int drmFd, HdiLayerBuffer &hdl)
         static bool logged;
         if (!logged) { logged = true; DISPLAY_LOGE("dma-buf sync before scanout failed: %{public}d", errno); }
     }
-    mDrmFormat = DrmDevice::ConvertToDrmFormat(static_cast<PixelFormat>(hdl.GetFormat()));
+    mDrmFormat = ScanoutFormat(DrmDevice::ConvertToDrmFormat(static_cast<PixelFormat>(hdl.GetFormat())));
     struct stat st;
     uint64_t ino = (fstat(hdl.GetFb(), &st) == 0) ? (uint64_t)st.st_ino : 0;
 

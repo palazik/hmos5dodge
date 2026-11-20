@@ -231,7 +231,8 @@ def main():
         name = record['path']
         assert not record['overrides_op13_path']
         assert vendor_owners[name] == record['metadata'], name
-        label = next(value for pattern, value in original_contexts if pattern.fullmatch('/vendor/' + name))
+        probe = 'lib64/chipsetsdk/libmapper_service_1.0.z.so' if name == 'lib64/chipsetsdk/libdrm_ohos.z.so' else name
+        label = next(value for pattern, value in original_contexts if pattern.fullmatch('/vendor/' + probe))
         assert vendor_labels[name] == label, name
     for name, label in [('etc', 'vendor_etc_file'), ('etc/selinux', 'vendor_etc_file'),
                         ('bin', 'vendor_bin_file'), ('lib64', 'vendor_lib_file')]:

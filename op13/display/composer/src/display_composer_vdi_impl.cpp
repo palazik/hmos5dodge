@@ -148,8 +148,10 @@ int32_t DisplayComposerVdiImpl::GetDisplayCompChange(uint32_t devId, std::vector
 
 int32_t DisplayComposerVdiImpl::SetDisplayClientCrop(uint32_t devId, const IRect& rect)
 {
-    { static bool once; if (!once) { once = true; DISPLAY_LOGE("%s is not supported (logged once)", __func__); } }
-    return HDF_ERR_NOT_SUPPORT;
+    /* Revision 31: the single full-screen client layer is always scanned out
+     * whole, so this hint is a no-op.  Returning NOT_SUPPORT made the donor
+     * composer service log an error and two warnings on every frame. */
+    return HDF_SUCCESS;
 }
 
 int32_t DisplayComposerVdiImpl::SetDisplayClientBuffer(uint32_t devId, const BufferHandle& buffer, int32_t fence)
@@ -163,8 +165,10 @@ int32_t DisplayComposerVdiImpl::SetDisplayClientBuffer(uint32_t devId, const Buf
 
 int32_t DisplayComposerVdiImpl::SetDisplayClientDamage(uint32_t devId, std::vector<IRect>& rects)
 {
-    { static bool once; if (!once) { once = true; DISPLAY_LOGE("%s is not supported (logged once)", __func__); } }
-    return HDF_ERR_NOT_SUPPORT;
+    /* Revision 31: the single full-screen client layer is always scanned out
+     * whole, so this hint is a no-op.  Returning NOT_SUPPORT made the donor
+     * composer service log an error and two warnings on every frame. */
+    return HDF_SUCCESS;
 }
 
 int32_t DisplayComposerVdiImpl::SetDisplayVsyncEnabled(uint32_t devId, bool enabled)
@@ -311,8 +315,10 @@ int32_t DisplayComposerVdiImpl::SetLayerDirtyRegion(uint32_t devId, uint32_t lay
 
 int32_t DisplayComposerVdiImpl::SetLayerVisibleRegion(uint32_t devId, uint32_t layerId, std::vector<IRect>& rects)
 {
-    { static bool once; if (!once) { once = true; DISPLAY_LOGE("%s is not supported (logged once)", __func__); } }
-    return HDF_ERR_NOT_SUPPORT;
+    /* Revision 31: the single full-screen client layer is always scanned out
+     * whole, so this hint is a no-op.  Returning NOT_SUPPORT made the donor
+     * composer service log an error and two warnings on every frame. */
+    return HDF_SUCCESS;
 }
 
 int32_t DisplayComposerVdiImpl::SetLayerBuffer(uint32_t devId, uint32_t layerId, const BufferHandle& buffer,
@@ -342,14 +348,18 @@ int32_t DisplayComposerVdiImpl::SetLayerBlendType(uint32_t devId, uint32_t layer
 
 int32_t DisplayComposerVdiImpl::SetLayerMaskInfo(uint32_t devId, uint32_t layerId, const MaskInfo maskInfo)
 {
-    { static bool once; if (!once) { once = true; DISPLAY_LOGE("%s is not supported (logged once)", __func__); } }
-    return HDF_ERR_NOT_SUPPORT;
+    /* Revision 31: the single full-screen client layer is always scanned out
+     * whole, so this hint is a no-op.  Returning NOT_SUPPORT made the donor
+     * composer service log an error and two warnings on every frame. */
+    return HDF_SUCCESS;
 }
 
 int32_t DisplayComposerVdiImpl::SetLayerColor(uint32_t devId, uint32_t layerId, const LayerColor& layerColor)
 {
-    { static bool once; if (!once) { once = true; DISPLAY_LOGE("%s is not supported (logged once)", __func__); } }
-    return HDF_ERR_NOT_SUPPORT;
+    /* Revision 31: the single full-screen client layer is always scanned out
+     * whole, so this hint is a no-op.  Returning NOT_SUPPORT made the donor
+     * composer service log an error and two warnings on every frame. */
+    return HDF_SUCCESS;
 }
 
 /* ---------------- IDisplayComposerVdiV1_1 ---------------- */

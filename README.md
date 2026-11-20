@@ -9,33 +9,33 @@ additions, matching OP13 DLKM images and the phone's existing stock ODM filesyst
 
 ## Status
 
-**Revision 29 boots to the HarmonyOS UI with GPU rendering, the original boot animation, ADB, and touch and keys reaching
-multimodalinput. Revision 30 targets the remaining SceneBoard freezes.** Revision 30 is not yet phone-tested.
+**Revision 30 boots to a usable HarmonyOS UI: GPU rendering, the original boot animation, touch, buttons, audio
+services and ADB. Revision 31 targets colors, stutter, heat and Vulkan.** Revision 31 is not yet phone-tested.
 
-Working on the phone (revision 29):
+Working on the phone (revision 30):
 
 - Boot through DSU to SceneBoard, with the stock kernel and full stock module set.
 - The original HarmonyOS boot video (audio track removed), unscaled.
-- GPU rendering: rebuilt Mesa 27 (freedreno/KGSL) on the Adreno 830, with GPU firmware loaded at boot.
-- ADB over USB (`hmos5dodge`), with the USB-C port forced into device role.
-- audio_server starts (HarmonyOS init gets `HOME=/`).
-- Touch and buttons reach multimodalinput (the touchscreen's zero-range axes are widened with `EVIOCSABS`), and the
-  power key wakes the screen.
+- GPU rendering: rebuilt Mesa 27 (freedreno/KGSL) on the Adreno 830. `op13-gpu-colortest` passes RGBA/BGRA, tiled,
+  NV12/NV21 and native-buffer cases.
+- Touch and buttons, with SceneBoard stable (audio HDI host, `HOME=/`, touchscreen axis fix).
+- ADB over USB (`hmos5dodge`).
 
-Fixed in revision 30 (see [REVISION30.md](op13/REVISION30.md)):
+Changes in revision 31 (see [REVISION31.md](op13/REVISION31.md)):
 
-- SceneBoard was still killed by its 6 s watchdog because every audio policy call waited 5 s for a default output
-  device. The port now ships the `audio_host` HDF host, the audio HDI chain with the reference port's tinyalsa VDI (which
-  plays to nowhere without a sound card), and the HarmonyOS audio policy config. Touch targets and visible key reactions
-  depend on SceneBoard staying up.
+- Colors: render_service's own screenshot is correct but the panel showed red and blue exchanged, so RGBA buffers are now
+  scanned out as ARGB8888 (overridable live via `/dev/shm/op13-scanout`).
+- Heat: the stock kernel's `performance` CPU governor is replaced by WALT/schedutil.
+- Stutter: no per-frame chipset-vsync IPC or composer error logs.
+- CPU: apps now find the mapper bridges in `/vendor/lib64/chipsetsdk`, with a HarmonyOS libdrm Android cannot shadow.
+- Vulkan: an ICD shim adds `VK_OHOS_native_buffer`/`VK_OHOS_external_memory` to Turnip (`op13-vk-colortest` checks it);
+  render_service stays on GLES until that passes on the phone.
+- hdc over USB alongside ADB.
 
 Still open:
 
-- Blue and pink are swapped on screen. `/system/bin/op13-gpu-colortest` checks GPU RGBA/BGRA handling over ADB.
-- Vulkan for render_service: Turnip is built and registered, but render_service stays on GLES until the OHOS
-  native-buffer/surface extensions exist.
-- Real sound, charging, sensors and USB-C detection need the ADSP/CDSP booted.
-- hdc is disabled; ADB is used instead.
+- Real sound, charging, sensors and USB-C detection need the ADSP/CDSP booted. The phone does not charge under DSU
+  HarmonyOS.
 
 Per-revision diagnoses are in `op13/REVISION*.md`; see also the [test instructions](op13/TESTING.md) and the
 [userdata allocation logic](op13/DSU-DATA-INITIALIZATION.md).

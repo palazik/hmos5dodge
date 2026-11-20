@@ -50,6 +50,9 @@ def metadata(path):
     return result
 
 
+DRM_OHOS = 'lib64/chipsetsdk/libdrm_ohos.z.so'
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--workspace', type=Path, required=True)
@@ -100,7 +103,11 @@ def main():
               # audio_primary_impl_vendor (VDI adapter) -> audio_primary_impl
               # (the reference port's tinyalsa VDI, which keeps streams
               # running without a sound card).
-              'libaudio_manager_service_4.0.z.so', 'libaudio_primary_impl_vendor.z.so', 'libaudio_primary_impl.z.so'}
+              'libaudio_manager_service_4.0.z.so', 'libaudio_primary_impl_vendor.z.so', 'libaudio_primary_impl.z.so',
+              # Revision 31: app processes do not see /hmos/display; they look
+              # for the mapper/metadata bridges in /vendor/lib64/chipsetsdk (the
+              # HarmonyOS location) and retried every 5 ms when they were absent.
+              'libmapper_service_1.0.z.so', 'libmapper_service_1.2.z.so', 'libmetadata_service_1.1.z.so'}
     unavailable_roots = []
     for name in roots:
         if name not in by_name:
@@ -173,6 +180,18 @@ def main():
     for name in ('libdisplay_buffer_vdi_impl.z.so', 'libdisplay_composer_vdi_impl.z.so'):
         shutil.copyfile(workspace / 'out/op13-display' / name, tree / 'lib64' / name)
         reasons['lib64/' + name].add('rebuilt OP13 native display implementation')
+    # Revision 31: /vendor/lib64/libdrm.so is the stock Android (bionic) libdrm
+    # and comes before /system/lib64/chipset-sdk in the default search order, so
+    # app processes would bind it.  Ship the HarmonyOS libdrm under its own name
+    # and link the display implementations against that name.
+    drm = tree / DRM_OHOS
+    drm.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(system / 'lib64/chipset-sdk/libdrm.so', drm)
+    subprocess.run(['patchelf', '--set-soname', DRM_OHOS.split('/')[-1], str(drm)], check=True)
+    reasons[DRM_OHOS].add('HarmonyOS libdrm under a name the Android vendor libdrm cannot shadow')
+    for name in ('libdisplay_buffer_vdi_impl.z.so', 'libdisplay_composer_vdi_impl.z.so'):
+        subprocess.run(['patchelf', '--replace-needed', 'libdrm.so', DRM_OHOS.split('/')[-1], str(tree / 'lib64' / name)],
+                       check=True)
     # The candidate native policy replaces the donor binary only in the copy.
     for name in ('policy.31', 'developer_policy'):
         shutil.copyfile(workspace / 'out/op13-policy' / name, tree / 'etc/selinux/prebuild_sepolicy' / name)
@@ -182,7 +201,7 @@ def main():
         if path.is_file():
             if not relative.startswith(('bin/', 'lib64/', 'etc/')) or relative.endswith(('.ko', '.sec')):
                 raise RuntimeError('hardware/firmware payload escaped selection: ' + relative)
-            owner = donor_meta[relative]
+            owner = donor_meta[relative] if relative != DRM_OHOS else donor_meta['lib64/chipsetsdk/libmapper_service_1.0.z.so']
             path.chmod(int(owner[2], 8))
             records.append({'path': relative, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
                 'metadata': owner, 'reasons': sorted(reasons[relative]), 'overrides_op13_path': relative in stock_meta})

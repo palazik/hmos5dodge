@@ -145,6 +145,8 @@ static void draw(GLuint tex)
  * on the CPU (the composer scans these bytes out as DRM ABGR8888 = R,G,B,A). */
 #define EGL_NATIVE_BUFFER_OHOS 0x34E1
 typedef struct { int32_t width, height, format, usage, stride; } NbConfig;
+static void yuv_tests(EGLDisplay, void *(*)(const NbConfig *), int (*)(void *, void **), int (*)(void *),
+                      void (*)(void *, NbConfig *), void *(*)(void *));
 static void native_buffer_tests(EGLDisplay dpy)
 {
     void *nb = dlopen("/system/lib64/chipset-pub-sdk/libnative_buffer.so", RTLD_NOW);
@@ -195,6 +197,71 @@ static void native_buffer_tests(EGLDisplay dpy)
             draw(tex);
             check("sample native RGBA_8888 (blue) -> RGBA", BLUE);
         }
+    }
+    yuv_tests(dpy, alloc, map, unmap, getconfig, wrap);
+}
+
+/* YUV path (boot video, hardware-decoded images): NV12 (YCBCR_420_SP) and NV21
+ * native buffers filled with BT.601 limited-range blue (Y=41 U=240 V=110),
+ * imported with EGL_NATIVE_BUFFER_OHOS and sampled through samplerExternalOES.
+ * Mesa's OHOS import expects the chroma plane at stride * height. */
+#ifndef GL_TEXTURE_EXTERNAL_OES
+#define GL_TEXTURE_EXTERNAL_OES 0x8D65
+#endif
+static void yuv_tests(EGLDisplay dpy, void *(*alloc)(const NbConfig *), int (*map)(void *, void **),
+                      int (*unmap)(void *), void (*getconfig)(void *, NbConfig *), void *(*wrap)(void *))
+{
+    const char *vs = "attribute vec2 p; varying vec2 uv; void main(){ uv = p * 0.5 + 0.5; gl_Position = vec4(p, 0.0, 1.0); }";
+    const char *fs = "#extension GL_OES_EGL_image_external : require\nprecision mediump float; varying vec2 uv;"
+                     " uniform samplerExternalOES s; void main(){ gl_FragColor = texture2D(s, uv); }";
+    GLuint v = p_glCreateShader(GL_VERTEX_SHADER), f = p_glCreateShader(GL_FRAGMENT_SHADER);
+    p_glShaderSource(v, 1, &vs, NULL); p_glCompileShader(v);
+    p_glShaderSource(f, 1, &fs, NULL); p_glCompileShader(f);
+    GLuint program = p_glCreateProgram();
+    p_glAttachShader(program, v); p_glAttachShader(program, f);
+    p_glBindAttribLocation(program, 0, "p");
+    p_glLinkProgram(program);
+    static const struct { int format; const char *name; uint8_t first, second; } cases[] = {
+        {24, "NV12 (YCBCR_420_SP) blue -> RGBA", 240, 110},  /* U then V */
+        {25, "NV21 (YCRCB_420_SP) blue -> RGBA", 110, 240},  /* V then U */
+    };
+    for (unsigned c = 0; c < 2; ++c) {
+        const NbConfig want = {SIZE, SIZE, cases[c].format, (1 << 0) | (1 << 1) | (1 << 3) | (1 << 9), 0};
+        void *buffer = alloc(&want);
+        if (!buffer) { printf("SKIP %s: alloc failed\n", cases[c].name); continue; }
+        NbConfig got = want;
+        if (getconfig) getconfig(buffer, &got);
+        uint8_t *bytes = NULL;
+        if (map(buffer, (void **)&bytes) || !bytes) { printf("SKIP %s: map failed\n", cases[c].name); continue; }
+        int stride = got.stride > 0 ? got.stride : SIZE;
+        for (int y = 0; y < SIZE; ++y) memset(bytes + y * stride, 41, SIZE);
+        uint8_t *uv = bytes + stride * SIZE;
+        for (int y = 0; y < SIZE / 2; ++y)
+            for (int x = 0; x < SIZE / 2; ++x) { uv[y * stride + 2 * x] = cases[c].first; uv[y * stride + 2 * x + 1] = cases[c].second; }
+        unmap(buffer);
+        void *image = p_eglCreateImageKHR(dpy, EGL_NO_CONTEXT, EGL_NATIVE_BUFFER_OHOS, wrap(buffer), NULL);
+        if (!image) { printf("FAIL %s: eglCreateImageKHR 0x%x\n", cases[c].name, p_eglGetError()); ++failures; continue; }
+        GLuint tex;
+        p_glGenTextures(1, &tex);
+        p_glBindTexture(GL_TEXTURE_EXTERNAL_OES, tex);
+        p_glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        p_glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        p_glEGLImageTargetTexture2DOES(GL_TEXTURE_EXTERNAL_OES, image);
+        target(texture(GL_RGBA, NULL));
+        static const GLfloat quad[] = {-1, -1, 1, -1, -1, 1, 1, 1};
+        p_glUseProgram(program);
+        p_glBindTexture(GL_TEXTURE_EXTERNAL_OES, tex);
+        p_glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, quad);
+        p_glEnableVertexAttribArray(0);
+        p_glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        p_glFinish();
+        static uint8_t px[SIZE * SIZE * 4];
+        p_glReadPixels(0, 0, SIZE, SIZE, GL_RGBA, GL_UNSIGNED_BYTE, px);
+        const uint8_t *m = px + (SIZE / 2 * SIZE + SIZE / 2) * 4;
+        bool ok = m[0] < 40 && m[1] < 40 && m[2] > 200;
+        if (!ok) ++failures;
+        printf("%s %-40s want ~0000ff got %02x%02x%02x (stride %d) gl_error=0x%x\n", ok ? "PASS" : "FAIL",
+               cases[c].name, m[0], m[1], m[2], stride, p_glGetError());
     }
 }
 

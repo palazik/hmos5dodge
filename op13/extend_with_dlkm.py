@@ -170,7 +170,7 @@ def main():
     updated.update({'partitions': records, 'zip': package, 'component_validation': components, 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 30, 'selinux_mode_changed': False,
+        'handoff_revision': 31, 'selinux_mode_changed': False,
         'native_graphics_runtime': components['native_graphics_runtime'],
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,

@@ -567,7 +567,7 @@ static void native_record_loop(int kernel, int output, int exec_pipe, unsigned d
 {
     size_t used = 0, exec_bytes = 0;
     int exec_error = 0;
-    const char begin[] = "HMOS native startup recorder revision 30; latest attempt only\n"
+    const char begin[] = "HMOS native startup recorder revision 31; latest attempt only\n"
         "Bounded to 4 MiB / 180 seconds; no boot deadline or reboot action.\n";
     append_native_log(output, begin, sizeof(begin) - 1, &used, limit);
     long long start = monotonic_ms(), next_state = start + 1000;
@@ -764,6 +764,42 @@ static void fix_touch_axes(void)
         close(fd);
     }
     if (inputs) closedir(inputs);
+}
+
+/*
+ * Revision 31: CPU frequency governor.  The stock OnePlus kernel boots every
+ * cpufreq policy with "performance" (all cores pinned at maximum clock); on
+ * ColorOS the vendor init switches them to WALT right after boot.  Under DSU
+ * HarmonyOS nothing does, and the guest's /sys is read-only, so revision 30
+ * ran 3.5/4.3 GHz permanently (hot phone, battery drain).  Switch each policy
+ * to "walt" (Qualcomm's scheduler-driven governor) or, if absent, "schedutil".
+ */
+static void set_cpu_governors(void)
+{
+    DIR *policies = opendir("/sys/devices/system/cpu/cpufreq");
+    struct dirent *entry;
+    while (policies && (entry = readdir(policies))) {
+        if (strncmp(entry->d_name, "policy", 6)) continue;
+        char path[256], available[256] = {0}, before[64] = {0}, after[64] = {0};
+        snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpufreq/%.32s/scaling_available_governors", entry->d_name);
+        read_text(path, available, sizeof(available));
+        const char *choice = strstr(available, "walt") ? "walt" : strstr(available, "schedutil") ? "schedutil" : NULL;
+        snprintf(path, sizeof(path), "/sys/devices/system/cpu/cpufreq/%.32s/scaling_governor", entry->d_name);
+        read_text(path, before, sizeof(before));
+        before[strcspn(before, "\r\n")] = 0;
+        bool ok = false;
+        if (choice) {
+            int fd = open(path, O_WRONLY | O_CLOEXEC);
+            ok = fd >= 0 && write(fd, choice, strlen(choice)) == (ssize_t)strlen(choice);
+            if (fd >= 0) close(fd);
+        }
+        read_text(path, after, sizeof(after));
+        after[strcspn(after, "\r\n")] = 0;
+        available[strcspn(available, "\r\n")] = 0;
+        log_line("cpufreq %s: %s -> %s (%s; available: %s)", entry->d_name, before, after,
+                 choice ? (ok ? "ok" : "write failed") : "no walt/schedutil", available);
+    }
+    if (policies) closedir(policies);
 }
 
 static void start_usb_adb(void)
@@ -1440,7 +1476,7 @@ int main(int argc, char **argv)
     umask(0);
     open_metadata_log();
     open_native_log();
-    log_line("starting OP13 DSU handoff revision 30; stage=partition-setup; argv[1]=%s", argv[1]);
+    log_line("starting OP13 DSU handoff revision 31; stage=partition-setup; argv[1]=%s", argv[1]);
     dev_t data = find_dsu_data();
     if (unshare(CLONE_NEWNS)) fatal("private native mount namespace");
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL)) fatal("private mount propagation");
@@ -1539,6 +1575,7 @@ int main(int argc, char **argv)
     prime_gpu_firmware();
     force_usb_device_role();
     fix_touch_axes();
+    set_cpu_governors();
     const char *brightness = "/sys/class/backlight/panel0-backlight/brightness";
     if (!access(brightness, F_OK)) {
         if (chown(brightness, 0, 1003) || chmod(brightness, 0660)) fatal("backlight ownership");

@@ -30,6 +30,14 @@ class DrmGemBuffer {
 public:
     DrmGemBuffer(int drmFd, HdiLayerBuffer &hdl);
     virtual ~DrmGemBuffer();
+    uint32_t GetGemHandle() const
+    {
+        return mGemHandle;
+    }
+    uint32_t GetDrmFormat() const
+    {
+        return mDrmFormat;
+    }
     uint32_t GetFbId() const
     {
         return mFdId;

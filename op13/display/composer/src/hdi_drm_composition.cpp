@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstring>
 #include <map>
+#include <vector>
 #include <thread>
 #include <fcntl.h>
 #include <sys/mman.h>
@@ -841,6 +842,65 @@ int32_t HdiDrmComposition::Apply(bool modeSet)
     return ApplyLocked(modeSet);
 }
 
+/*
+ * Revision 31 colour diagnostic.  Blue shows as pink on the panel although the
+ * GPU, Mesa, this composer's DRM format and the SDE format table all check out.
+ * About 45 s, 90 s and 180 s after the first frame, save a 1/8-scale copy of
+ * the exact buffer being scanned out to /dev/shm/op13-frame-N.ppm (tmpfs,
+ * world-readable) with the bytes in memory order 0,1,2 -- R,G,B for DRM
+ * ABGR8888 -- and log the format plus a few pixels, so render_service's real
+ * output can be compared with what the panel shows.
+ */
+static void HmosDumpFrame(int drmFd, uint32_t gem, uint32_t drmFormat, int w, int h, int stride)
+{
+    static int64_t first = 0;
+    static int index = 0;
+    static const int64_t at[] = {45000, 90000, 180000};
+    int64_t now = HmosNowMs();
+    if (first == 0) first = now;
+    if (index >= 3 || now - first < at[index] || gem == 0 || w <= 0 || h <= 0 || stride < w * 4) return;
+    int n = index++;
+    struct drm_mode_map_dumb md = {};
+    md.handle = gem;
+    if (ioctl(drmFd, DRM_IOCTL_MODE_MAP_DUMB, &md) != 0) {
+        DISPLAY_LOGE("frame dump %{public}d: map dumb failed errno %{public}d", n, errno);
+        return;
+    }
+    size_t size = static_cast<size_t>(stride) * h;
+    void *map = mmap(nullptr, size, PROT_READ, MAP_SHARED, drmFd, md.offset);
+    if (map == MAP_FAILED) {
+        DISPLAY_LOGE("frame dump %{public}d: mmap failed errno %{public}d", n, errno);
+        return;
+    }
+    const uint8_t *px = static_cast<const uint8_t *>(map);
+    char path[64];
+    snprintf(path, sizeof(path), "/dev/shm/op13-frame-%d.ppm", n);
+    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd >= 0) {
+        int ow = w / 8, oh = h / 8;
+        char header[64];
+        int hl = snprintf(header, sizeof(header), "P6\n%d %d\n255\n", ow, oh);
+        write(fd, header, hl);
+        std::vector<uint8_t> row(static_cast<size_t>(ow) * 3);
+        for (int y = 0; y < oh; y++) {
+            const uint8_t *src = px + static_cast<size_t>(y * 8) * stride;
+            for (int x = 0; x < ow; x++) {
+                memcpy(&row[x * 3], src + x * 8 * 4, 3);
+            }
+            write(fd, row.data(), row.size());
+        }
+        fchmod(fd, 0644);
+        close(fd);
+    }
+    const uint8_t *c = px + static_cast<size_t>(h / 2) * stride + (w / 2) * 4;
+    const uint8_t *t = px + static_cast<size_t>(h / 16) * stride + (w / 2) * 4;
+    DISPLAY_LOGI("frame dump %{public}d: %{public}s fourcc %{public}c%{public}c%{public}c%{public}c %{public}dx%{public}d "
+        "stride %{public}d center %{public}02x%{public}02x%{public}02x%{public}02x top %{public}02x%{public}02x%{public}02x%{public}02x",
+        n, path, drmFormat & 0xff, (drmFormat >> 8) & 0xff, (drmFormat >> 16) & 0xff, drmFormat >> 24, w, h, stride,
+        c[0], c[1], c[2], c[3], t[0], t[1], t[2], t[3]);
+    munmap(map, size);
+}
+
 int32_t HdiDrmComposition::ApplyLocked(bool modeSet)
 {
     mLastApplyMs = HmosNowMs();
@@ -991,6 +1051,15 @@ int32_t HdiDrmComposition::ApplyLocked(bool modeSet)
     }
     if (static_cast<int>(crtcOutFence) >= 0) {
         prevFence = dup(static_cast<int>(crtcOutFence));
+    }
+    if (!mCompLayers.empty() && mCompLayers[0]->GetCurrentBuffer()) {
+        HdiDrmLayer *dumpLayer = static_cast<HdiDrmLayer *>(mCompLayers[0]);
+        HdiLayerBuffer *dumpBuffer = mCompLayers[0]->GetCurrentBuffer();
+        DrmGemBuffer *dumpGem = dumpLayer->GetGemBuffer();
+        if (dumpGem != nullptr && dumpGem->IsValid()) {
+            HmosDumpFrame(drmFd, dumpGem->GetGemHandle(), dumpGem->GetDrmFormat(), dumpBuffer->GetWight(),
+                dumpBuffer->GetHeight(), dumpBuffer->GetStride());
+        }
     }
     // set the release fence: every layer owns its own copy (they close it
     // when the next one arrives), the out fence itself is closed here

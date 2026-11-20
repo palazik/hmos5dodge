@@ -21,6 +21,7 @@
 
 #define GADGET "/config/usb_gadget/hmos5dodge"
 #define FFS "/dev/usb-ffs/adb"
+#define HDC_FFS "/dev/usb-ffs/hdc"
 
 static bool directory(const char *path)
 {
@@ -162,6 +163,25 @@ static int configure(void)
     }
     if (!ready) { errno = ETIMEDOUT; goto fail; }
     if (symlink(GADGET "/functions/ffs.hmos_adb", GADGET "/configs/b.1/f1")) goto fail;
+    // Revision 31: HarmonyOS hdc in the same gadget.  init starts hdcd once
+    // persist.hdc.mode.usb=enable (op13_compat_env.cfg); it writes its
+    // descriptors to /dev/usb-ffs/hdc/ep0.  If it does not come up within 20 s,
+    // ADB binds alone, so hdc can never take ADB down.
+    if (directory(GADGET "/functions/ffs.hdc") && directory(HDC_FFS) &&
+        (!mount("hdc", HDC_FFS, "functionfs", MS_NOSUID | MS_NODEV | MS_NOEXEC, "uid=2000,gid=2000,rmode=0770,fmode=0660") ||
+         errno == EBUSY)) {
+        bool hdc = false;
+        for (unsigned i = 0; i < 200 && !hdc; ++i) {
+            hdc = !access(HDC_FFS "/ep1", F_OK) && !access(HDC_FFS "/ep2", F_OK);
+            if (!hdc) usleep(100000);
+        }
+        if (hdc && !symlink(GADGET "/functions/ffs.hdc", GADGET "/configs/b.1/f2"))
+            fprintf(stderr, "HDC: hdcd function added to the gadget\n");
+        else
+            fprintf(stderr, "HDC: hdcd endpoints %s; binding ADB only\n", hdc ? "present but link failed" : "not ready after 20 s");
+    } else {
+        fprintf(stderr, "HDC: FunctionFS setup failed: %s; binding ADB only\n", strerror(errno));
+    }
     DIR *gadgets = opendir("/config/usb_gadget");
     if (!gadgets) goto fail;
     struct dirent *entry;

@@ -32,13 +32,22 @@ GPU_API = 'persist.sys.graphic.GpuApitype'
 HILOG_LEVEL = 'hilog.loggable.global'
 ENV = {'jobs': [
     {'name': 'pre-init', 'cmds': ['export UV_USE_IO_URING 0']},
-    {'name': 'post-fs-data', 'cmds': ['setparam ' + GPU_API + ' 0']},
+    # 5. Revision 31: HarmonyOS hdc over USB (in the ADB gadget, adb/usb_manager.c),
+    #    without the on-device authorization dialog.  Stored persist values load
+    #    after post-fs-data, so a param trigger re-enables USB mode.
+    {'name': 'post-fs-data', 'cmds': ['setparam ' + GPU_API + ' 0', 'setparam const.hdc.secure 0',
+                                      'setparam persist.hdc.mode.tcp disable', 'setparam persist.hdc.mode.usb enable',
+                                      'setparam persist.hdc.root 1']},
+    {'name': 'param:persist.hdc.mode.usb=disable', 'condition': 'persist.hdc.mode.usb=disable',
+     'cmds': ['setparam persist.hdc.mode.usb enable']},
     {'name': 'param:' + GPU_API + '=1', 'condition': GPU_API + '=1', 'cmds': ['setparam ' + GPU_API + ' 0']},
     {'name': 'param:' + GPU_API + '=2', 'condition': GPU_API + '=2', 'cmds': ['setparam ' + GPU_API + ' 0']},
     # 4. Diagnostics: revision 25 showed hilog.loggable.global=W set at 19.76 s,
     #    dropping all info logs (multimodalinput device adoption is info-level).
     {'name': 'param:' + HILOG_LEVEL + '=W', 'condition': HILOG_LEVEL + '=W', 'cmds': ['setparam ' + HILOG_LEVEL + ' I']},
 ]}
+VSYNC_STUB = 'libchipset_vsync.z.so'
+VSYNC_BUILD = 'out/op13-compat/' + VSYNC_STUB
 LABELS = [('/system/lib64/libop13_code_sign\\.so', 'system_lib_file')]
 
 
@@ -69,7 +78,12 @@ def install(workspace, stage):
         raise RuntimeError('code-sign shim is not the first installer dependency')
     (stage / ENV_CFG).parent.mkdir(parents=True, exist_ok=True)
     (stage / ENV_CFG).write_bytes(env_content())
-    return {'code_sign_shim_sha256': digest(target / SHIM), 'installer_donor_sha256': digest(workspace / DONOR_INSTALLER),
+    # Revision 31: no-op chipset vsync (see chipset_vsync_stub.c).
+    if not (workspace / VSYNC_BUILD).is_file():
+        raise RuntimeError('build the chipset vsync stub first (validate_components.py)')
+    shutil.copyfile(workspace / VSYNC_BUILD, target / VSYNC_STUB)
+    return {'chipset_vsync_stub_sha256': digest(target / VSYNC_STUB),
+            'code_sign_shim_sha256': digest(target / SHIM), 'installer_donor_sha256': digest(workspace / DONOR_INSTALLER),
             'installer_sha256': digest(installer), 'installer_needed': needed(installer),
             'env': ENV, 'hardware_tested': False}
 
@@ -79,3 +93,5 @@ def verify(after, record):
     assert digest(after / INSTALLER) == record['installer_sha256']
     assert needed(after / INSTALLER) == record['installer_needed'] and record['installer_needed'][0] == SHIM
     assert (after / ENV_CFG).read_bytes() == env_content()
+    if 'chipset_vsync_stub_sha256' in record:
+        assert digest(after / 'system/lib64' / VSYNC_STUB) == record['chipset_vsync_stub_sha256']

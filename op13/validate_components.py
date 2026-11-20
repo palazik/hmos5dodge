@@ -105,6 +105,9 @@ def main():
     tests.append(run('code-sign-shim-build', ['bash', 'build/ohos-clang', '-O2', '-fPIC', '-Wall', '-Wextra', '-Werror',
         '-shared', 'op13/code_sign_compat.c', '-Wl,-soname,libop13_code_sign.so', '-Wl,--no-undefined',
         '-ldl', '-lc', '-o', compat / 'libop13_code_sign.so'], env=environment))
+    tests.append(run('chipset-vsync-stub-build', ['bash', 'build/ohos-clang', '-O2', '-fPIC', '-Wall', '-Wextra', '-Werror',
+        '-shared', 'op13/chipset_vsync_stub.c', '-Wl,-soname,libchipset_vsync.z.so', '-Wl,--no-undefined',
+        '-lc', '-o', compat / 'libchipset_vsync.z.so'], env=environment))
     adb = WORKSPACE / 'out/op13-adb'
     adb.mkdir(parents=True, exist_ok=True)
     tests.append(run('adb-usb-manager-build', ['bash', 'build/ohos-clang', '-O2', '-Wall', '-Wextra', '-Werror',

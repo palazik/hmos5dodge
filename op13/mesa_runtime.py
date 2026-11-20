@@ -22,11 +22,14 @@ TARGET = 'hmos/display/mesa'
 SLOT_GALLIUM = 'libgallium-26.1.0-devel.so'
 GL = ('libEGL_impl.so', 'libGLESv1_impl.so', 'libGLESv2_impl.so', 'libGLESv3_impl.so')
 VULKAN = 'libvulkan_freedreno.so'
+# Revision 31: ICD shim adding VK_OHOS_native_buffer / VK_OHOS_external_memory (mesa/vk_ohos_shim.c)
+SHIM = 'libvulkan_op13_ohos.so'
 ICD = 'system/etc/vulkan/icd.d/freedreno_icd.aarch64.json'
 ICD_CONTENT = {'file_format_version': '1.0.1',
-               'ICD': {'library_path': '/' + TARGET + '/' + VULKAN, 'api_version': '1.4.0'}}
+               'ICD': {'library_path': '/' + TARGET + '/' + SHIM, 'api_version': '1.4.0'}}
 COLORTEST = ('out/op13-mesa/bin/op13-gpu-colortest', 'system/bin/op13-gpu-colortest')
-LABELS = [('/system/etc/vulkan(/.*)?', 'system_etc_file'), ('/system/bin/op13-gpu-colortest', 'system_bin_file')]
+VKTEST = ('out/op13-mesa/bin/op13-vk-colortest', 'system/bin/op13-vk-colortest')
+LABELS = [('/system/etc/vulkan(/.*)?', 'system_etc_file'), ('/system/bin/op13-gpu-colortest', 'system_bin_file'), ('/system/bin/op13-vk-colortest', 'system_bin_file')]
 
 
 def digest(path):
@@ -53,10 +56,15 @@ def install(workspace, stage):
     gallium = target / SLOT_GALLIUM
     shutil.copyfile(built[0], gallium)
     subprocess.run(['patchelf', '--set-soname', SLOT_GALLIUM, str(gallium)], check=True)
-    for name in GL + (VULKAN,):
+    for name in GL + (VULKAN, SHIM):
         shutil.copyfile(source / name, target / name)
         if built[0].name in needed(target / name):
             subprocess.run(['patchelf', '--replace-needed', built[0].name, SLOT_GALLIUM, str(target / name)], check=True)
+    # Revision 31: link libdrm by the name that /vendor/lib64/libdrm.so (Android,
+    # bionic) cannot shadow in app processes; see prepare_vendor.py.
+    for path in target.iterdir():
+        if 'libdrm.so' in needed(path):
+            subprocess.run(['patchelf', '--replace-needed', 'libdrm.so', 'libdrm_ohos.z.so', str(path)], check=True)
     for path in target.iterdir():
         path.chmod(0o644)
         if built[0].name in needed(path):
@@ -68,10 +76,13 @@ def install(workspace, stage):
     colortest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(workspace / COLORTEST[0], colortest)
     colortest.chmod(0o755)
+    vktest = stage / VKTEST[1]
+    shutil.copyfile(workspace / VKTEST[0], vktest)
+    vktest.chmod(0o755)
     return {'mesa_source': 'lfdevs/mesa-for-android-container dev/adreno-main 1e6ee4d + OHOS EGL patch',
             'renamed_from': built[0].name,
             'files': {str(p.relative_to(stage)): digest(p) for p in sorted(target.iterdir())},
-            'icd': digest(icd), 'colortest': digest(colortest), 'hardware_tested': False}
+            'icd': digest(icd), 'colortest': digest(colortest), 'vktest': digest(vktest), 'hardware_tested': False}
 
 
 def verify(after, record):
@@ -85,3 +96,5 @@ def verify(after, record):
     assert (after / ICD).read_bytes() == icd_content()
     if 'colortest' in record:
         assert digest(after / COLORTEST[1]) == record['colortest']
+    if 'vktest' in record:
+        assert digest(after / VKTEST[1]) == record['vktest']

@@ -99,7 +99,7 @@ def patch_image(workspace, output, partition, source, tree, owners, labels, spec
             if re.fullmatch(pattern, '/' + name):
                 label = 'u:object_r:' + value + ':s0'
         if name in ('system/bin/init', 'system/bin/hmos-native-init', 'system/bin/storage_daemon', 'system/bin/hmos-oobedone',
-                    'system/bin/hmos-adbd', 'system/bin/hmos-usb-manager', 'system/bin/op13-gpu-colortest'):
+                    'system/bin/hmos-adbd', 'system/bin/hmos-usb-manager', 'system/bin/op13-gpu-colortest', 'system/bin/op13-vk-colortest'):
             owner = ['0', '0', '0755']
         if path.is_file():
             path.chmod(int(owner[2], 8))
@@ -252,7 +252,13 @@ def main():
                 specials.append((re.escape(path), label.split(':')[2]))
     for record in vendor['files']:
         path = '/' + record['path']
-        label = next(value for pattern, value in native_labels if re.fullmatch(pattern, path))
+        label = next((value for pattern, value in native_labels if re.fullmatch(pattern, path)), None)
+        if label is None and path == '/lib64/chipsetsdk/libdrm_ohos.z.so':
+            # Revision 31 addition with no donor context: label it like its chipsetsdk neighbours.
+            label = next(value for pattern, value in native_labels
+                         if re.fullmatch(pattern, '/lib64/chipsetsdk/libmapper_service_1.0.z.so'))
+        if label is None:
+            raise ValueError('no native SELinux label for vendor addition ' + path)
         specials.append((re.escape(path), label.split(':')[2]))
     images['vendor'] = patch_image(workspace, output, 'vendor', workspace / 'op13_stock/vendor.img',
                                   vendor_stage, owners, labels, specials, full=True)
@@ -280,7 +286,7 @@ def main():
     report = {'status': 'experimental-op13-only-multipart-dsu', 'phone_boot_tested': False,
         'userdata_initialization': 'Android DSU installer-wiped header only, before mount; no formatting on mount failure',
         'userdata_allocation_resized': False,
-        'handoff_revision': 30, 'boot_animation': boot_animation, 'init_plugins': init_plugins, 'native_compat': native_compat, 'adb': adb, 'mesa': mesa, 'selinux_mode_changed': False,
+        'handoff_revision': 31, 'boot_animation': boot_animation, 'init_plugins': init_plugins, 'native_compat': native_compat, 'adb': adb, 'mesa': mesa, 'selinux_mode_changed': False,
         'native_graphics_runtime': validation['native_graphics_runtime'],
         'native_ipc': dlkm['ipc_module'], 'kernel_image_modified': False,
         'additional_kernel_module': True,
